@@ -1,16 +1,9 @@
 import {
-    getStructDecoder,
-    getU64Decoder,
-    getU32Decoder,
-    getI32Decoder,
-    getBytesDecoder,
-    getAddressDecoder,
-    fixCodecSize
+    getStructDecoder, getU64Decoder, getU32Decoder, getI32Decoder, getBytesDecoder, getAddressDecoder, fixCodecSize
 } from '@solana/kit';
 
 export function getGlobalStateDecoder() {
-    return getStructDecoder([
-        ['slippageBps', getU64Decoder()],                // 8-16
+    return getStructDecoder([['slippageBps', getU64Decoder()],                // 8-16
         ['hardCapBuySol', getU64Decoder()],              // 16-24
         ['hardCapSellSol', getU64Decoder()],             // 24-32
         ['solHoldingMin', getU64Decoder()],              // 32-40

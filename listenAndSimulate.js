@@ -45,10 +45,8 @@ const logsEvent = connection.onLogs(new PublicKey(MAYHEM_TRADING_WALLET), async 
     console.log("bonding curve", bondingCurveObj);
     let marketCap = dataBuffer.readBigInt64LE(8);
     console.log("original", decodedIxData.type, tx.slot, mint, marketCap, logs.signature);
-    /*
     marketCap *= 10n;
     marketCap /= 10n;
-    */
     printBalanceDifferences(tx.meta);
     console.log("expected amount", (bondingCurveObj.realSolReserves * 20n) / 100n - BigInt(decodedIxData.type === 'sell'), "lamports")
     await simulateTransaction(decodedIxData.type, marketCap, mint, tokenState, tokenAccount, bondingCurve, vault, creatorVault)
