@@ -4,6 +4,7 @@ import {connection} from "./utils/rpc.js";
 import {MAYHEM_PROGRAM_ID, MAYHEM_TRADING_WALLET, PUMP_FUN_PROGRAM} from "./utils/constants.js";
 import {decodeTokenState} from "./decoders/decodeTokenState.js";
 import {decodeCreateV2} from "./decoders/decodeCreateV2.js";
+import {decodeMayhemIxDataEvent} from "./decoders/decodeMayhemIxData.js";
 
 async function monitorTradingBot(mintAddress) {
     return connection.onLogs(new PublicKey(MAYHEM_TRADING_WALLET), async (logs) => {
@@ -13,13 +14,13 @@ async function monitorTradingBot(mintAddress) {
         if (tx.transaction.message.instructions[2].programId.toBase58() !== MAYHEM_PROGRAM_ID) return;
         if (tx.meta.innerInstructions[0].instructions[2].parsed.info.mint !== mintAddress) return;
         const dataBuffer = Buffer.from(bs58.decode(tx.transaction.message.instructions[2].data));
-        console.log(decodeTokenState(dataBuffer))
+        console.log(decodeMayhemIxDataEvent(dataBuffer))
     }, 'processed');
 }
 
 // --- MAIN LOOP ---
 async function startMonitoring() {
-    return connection.onLogs(
+    const logsId = connection.onLogs(
         new PublicKey(MAYHEM_PROGRAM_ID),
         async (logs) => {
             if (logs.err) return;
@@ -31,12 +32,15 @@ async function startMonitoring() {
             if (!tx) return;
             const instructions = tx.transaction.message.instructions;
             const ix = instructions[2];
-            const ixBuffer = Buffer.from(bs58.decode(ix.data));
+            let ixBuffer = null;
+            if (typeof ix.data === 'string')
+                ixBuffer = Buffer.from(bs58.decode(ix.data));
             const isValid = ix
                 && ix.programId.toString() === PUMP_FUN_PROGRAM
                 && ix.accounts[9]?.toBase58() === MAYHEM_PROGRAM_ID
-                && decodeCreateV2(ixBuffer).isMayhemMode;
+                && ixBuffer !== null && decodeCreateV2(ixBuffer).isMayhemMode;
             if (!isValid) return;
+            await connection.removeOnLogsListener(logsId);
             const stateAccountKey = tx.transaction.message.accountKeys[6];
             const stateAccountData = await connection.getAccountInfo(stateAccountKey.pubkey);
             const mintAddress = decodeTokenState(stateAccountData.data).targetMint;

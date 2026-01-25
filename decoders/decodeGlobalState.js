@@ -11,14 +11,13 @@ export function getGlobalStateDecoder() {
         [void 0, fixCodecSize(getBytesDecoder(), 1)],             // 40-48
         ['adminFeeReceiver', getAddressDecoder()],       // 49-81
         ['programAuthority', getAddressDecoder()],       // 81-113
-        ['unknownParameter1', getI32Decoder()],          // 113-117
-        ['unknownParameter2', getU64Decoder()],          // 117-125
-        [void 0, fixCodecSize(getBytesDecoder(), 4)],             // 40-48
+        ['unknownParameter1', getU64Decoder()],          // 113-117
+        [void 0, fixCodecSize(getBytesDecoder(), 0)],             // 40-48
         ['minTotalHolding', getU64Decoder()],            // 129-137
-        ['unknownParameter3', getU32Decoder()],          // 137-145
-        [void 0, fixCodecSize(getBytesDecoder(), 13)],             // 40-48
+        ['unknownParameter2', getU32Decoder()],          // 137-145
+        [void 0, fixCodecSize(getBytesDecoder(), 21)],             // 40-48
         ['sessionTimeout', getU64Decoder()],             // 154-162
-        ['unknownParameter4', getU32Decoder()],          // 162-166
+        ['unknownParameter3', getU32Decoder()],          // 162-166
         ['maxSession', getI32Decoder()],                 // 166-170
     ]);
 }
