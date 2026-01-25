@@ -83,7 +83,7 @@ export async function simulateTransaction(type, marketCapInput, mint, tokenState
     const buyDiscriminator = [102, 6, 61, 18, 1, 218, 235, 234]; // Buy
 
     const trailingData = Buffer.alloc(10);
-    trailingData.writeUInt16LE(6000, 8);
+    trailingData.writeUInt16LE(2500, 8);
 
     const originalData = Buffer.concat([
         Buffer.from(type === 'buy'
@@ -116,6 +116,6 @@ export async function simulateTransaction(type, marketCapInput, mint, tokenState
     } else {
         console.log("✅ SUCCÈS : Transaction valide !");
     }
-    //simulation.value.logs.forEach(l => console.log("  >", l));
+    simulation.value.logs.forEach(l => console.log("  >", l));
     printBalanceDifferences(simulation.value);
 }
