@@ -4,20 +4,20 @@ import {
 } from '@solana/kit';
 
 export function getGlobalStateDecoder() {
-    return getStructDecoder([['slippageBps', getU64Decoder()],                // 8-16
-        ['hardCapBuySol', getU64Decoder()],              // 16-24
-        ['hardCapSellSol', getU64Decoder()],             // 24-32
-        ['solHoldingMin', getU64Decoder()],              // 32-40
-        ['sweepThreshold', getU64Decoder()],             // 40-48
-        [void 0, fixCodecSize(getBytesDecoder(), 1)],             // 40-48
-        ['adminFeeReceiver', getAddressDecoder()],       // 49-81
-        ['programAuthority', getAddressDecoder()],       // 81-113
-        ['unknownParameter2', getU128Decoder()],            // 129-137
-        ['minTotalHolding', getU32Decoder()],          // 137-145
-        [void 0, fixCodecSize(getBytesDecoder(), 21)],             // 40-48
-        ['sessionTimeout', getU64Decoder()],             // 154-162
-        ['unknownParameter3', getU32Decoder()],          // 162-166
-        ['maxSession', getI32Decoder()],                 // 166-170
+    return getStructDecoder([['slippageBps', getU64Decoder()],
+        ['hardCapBuySol', getU64Decoder()],
+        ['hardCapSellSol', getU64Decoder()],
+        ['solHoldingMin', getU64Decoder()],
+        ['sweepThreshold', getU64Decoder()],
+        [void 0, fixCodecSize(getBytesDecoder(), 1)],
+        ['adminFeeReceiver', getAddressDecoder()],
+        ['programAuthority', getAddressDecoder()],
+        ['unknownParameter1', getU128Decoder()],
+        ['minTotalHolding', getU32Decoder()],
+        [void 0, fixCodecSize(getBytesDecoder(), 21)],
+        ['sessionTimeout', getU64Decoder()],
+        ['unknownParameter2', getU32Decoder()],
+        ['maxSession', getI32Decoder()],
     ]);
 }
 

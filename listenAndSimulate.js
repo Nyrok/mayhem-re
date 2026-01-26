@@ -11,6 +11,8 @@ import {printBalanceDifferences} from "./tools/interpreter.js";
 import {decodeMayhemIxDataEvent} from "./decoders/decodeMayhemIxData.js";
 import {decodeTokenState} from "./decoders/decodeTokenState.js";
 
+let hasListened = false;
+
 const logsEvent = connection.onLogs(new PublicKey(MAYHEM_TRADING_WALLET), async (logs) => {
     if (logs.err) return;
     const tx = await connection.getParsedTransaction(logs.signature, {maxSupportedTransactionVersion: 0});
@@ -22,6 +24,8 @@ const logsEvent = connection.onLogs(new PublicKey(MAYHEM_TRADING_WALLET), async 
         if (!['buy', 'sell'].includes(decodedIxData.type)) {
             return;
         }
+        if (hasListened) return;
+        hasListened = true;
         await connection.removeOnLogsListener(logsEvent);
         let mint, tokenState, tokenAccount, bondingCurve, vault, creatorVault;
         if (decodedIxData.type === 'buy') {
@@ -46,13 +50,12 @@ const logsEvent = connection.onLogs(new PublicKey(MAYHEM_TRADING_WALLET), async 
         console.log("bonding curve", bondingCurveObj);
         let marketCap = dataBuffer.readBigInt64LE(8);
         console.log("original", decodedIxData.type, tx.slot, mint, marketCap, logs.signature);
-        marketCap *= 10n;
-        marketCap /= 10n;
+        const newMarketCap = bondingCurveObj.tokenTotalSupply * bondingCurveObj.virtualSolReserves / bondingCurveObj.virtualTokenReserves
         printBalanceDifferences(tx.meta);
-        console.log("expected amount", (bondingCurveObj.realSolReserves * 20n) / 100n - BigInt(decodedIxData.type === 'sell'), "lamports")
-        await simulateTransaction(decodedIxData.type, marketCap, mint, tokenState, tokenAccount, bondingCurve, vault, creatorVault)
-        console.log("expected amount", (bondingCurveObj.realSolReserves * 20n) / 100n - BigInt(decodedIxData.type !== 'sell'), "lamports")
-        await simulateTransaction(decodedIxData.type === 'buy' ? 'sell' : 'buy', marketCap, mint, tokenState, tokenAccount, bondingCurve, vault, creatorVault)
+        console.log("new market cap", newMarketCap, "expected amount", (bondingCurveObj.realSolReserves * 20n) / 100n - BigInt(decodedIxData.type === 'sell'), "lamports")
+        await simulateTransaction(decodedIxData.type, newMarketCap, mint, tokenState, tokenAccount, bondingCurve, vault, creatorVault)
+        console.log("new market cap", newMarketCap, "expected amount", (bondingCurveObj.realSolReserves * 20n) / 100n - BigInt(decodedIxData.type !== 'sell'), "lamports")
+        await simulateTransaction(decodedIxData.type === 'buy' ? 'sell' : 'buy', newMarketCap, mint, tokenState, tokenAccount, bondingCurve, vault, creatorVault)
         process.exit(0);
     } catch (e) {
 

@@ -27,7 +27,7 @@ export function getMayhemTradeEventDecoder() {
         ['endTime', getI64Decoder()],
         ['realSolReserves', getU64Decoder()],
         ['realTokenReserves', getU64Decoder()],
-        ['constant', getU32Decoder()],
+        ['version', getU32Decoder()],
     ]);
 }
 
