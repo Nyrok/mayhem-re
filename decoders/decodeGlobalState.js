@@ -1,6 +1,6 @@
 import {
     getStructDecoder, getU64Decoder, getU32Decoder, getI32Decoder, getBytesDecoder, getAddressDecoder, fixCodecSize,
-    getU128Decoder
+    getU128Decoder, getBooleanDecoder, getU8Decoder
 } from '@solana/kit';
 
 export function getGlobalStateDecoder() {
@@ -14,9 +14,11 @@ export function getGlobalStateDecoder() {
         ['programAuthority', getAddressDecoder()],
         ['unknownParameter1', getU128Decoder()],
         ['minTotalHolding', getU32Decoder()],
-        [void 0, fixCodecSize(getBytesDecoder(), 21)],
+        [void 0, fixCodecSize(getBytesDecoder(), 4)],
+        ['unknownParameter2', getU8Decoder()],
+        [void 0, fixCodecSize(getBytesDecoder(), 16)],
         ['sessionTimeout', getU64Decoder()],
-        ['unknownParameter2', getU32Decoder()],
+        ['version', getU32Decoder()],
         ['maxSession', getI32Decoder()],
     ]);
 }
