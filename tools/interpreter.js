@@ -13,7 +13,7 @@ export function printBalanceDifferences(meta) {
         const preAmount = preAccount ? BigInt(preAccount.uiTokenAmount.amount) : 0n;
         const postAmount = BigInt(postAccount.uiTokenAmount.amount);
         const decimals = postAccount.uiTokenAmount.decimals;
-        const tokenDiff = postAmount - preAmount;
+        const tokenDiff = BigInt(postAmount - preAmount);
         if (tokenDiff !== 0n) {
             const formattedDiff = Number(tokenDiff) / 10 ** decimals;
             console.log(`Compte Token #${postAccount.accountIndex} (${postAccount.owner}) : ${tokenDiff > 0n ? '+' : ''}${formattedDiff.toLocaleString()} tokens`);

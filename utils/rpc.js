@@ -8,7 +8,8 @@ const LOCAL_WSS_URL = 'ws://127.0.0.1:8900';
 const isLocalRpc = process.env.ENV === 'local-rpc';
 
 export const connection = new Connection(isLocalRpc ? LOCAL_RPC_URL : RPC_URL, {
-    wsEndpoint: isLocalRpc ? LOCAL_WSS_URL : WSS_URL, commitment: 'confirmed'
+    wsEndpoint: isLocalRpc ? LOCAL_WSS_URL : WSS_URL, commitment: 'confirmed',
+    confirmTransactionInitialTimeout: 300_000
 });
 
 export const mainnetConnection = new Connection(RPC_URL, {

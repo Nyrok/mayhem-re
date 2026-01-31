@@ -42,4 +42,5 @@ solana-test-validator -u https://api.mainnet-beta.solana.com \
   --clone DttWaMuVvTiduZRnguLF7jNxTgiMBZ1hyAumKUiL2KRL \
   --clone FFWtrEQ4B4PKQoVuHYzZq8FabGkVatYzDpEVHsK5rrhF \
   --clone UqN2p5bAzBqYdHXcgB6WLtuVrdvmy9JSAtgqZb3CMKw \
+  --clone TSLvdd1pWpHVjahSpsvCXUbgwsL3JAcvokwaKt1eokM \
   --clone 39azUYFWPz3VHgKCf3VChUwbpURdCHRxjWVowf5jUJjg
