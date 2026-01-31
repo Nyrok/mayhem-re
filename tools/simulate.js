@@ -1,13 +1,34 @@
-import {ComputeBudgetProgram, PublicKey, SystemProgram, Transaction, TransactionInstruction} from "@solana/web3.js";
+import 'dotenv/config';
+import {
+    ComputeBudgetProgram,
+    Keypair,
+    PublicKey,
+    SystemProgram,
+    Transaction,
+    TransactionInstruction
+} from "@solana/web3.js";
 import {connection} from "../utils/rpc.js";
-import {printBalanceDifferences} from "./interpreter.js";
-import {MAYHEM_PROGRAM_ID, MAYHEM_TRADING_WALLET} from "../utils/constants.js";
+import {
+    MAYHEM_EVENT_AUTHORITY, MAYHEM_FEE_RECIPIENT,
+    MAYHEM_GLOBAL_STATE,
+    MAYHEM_PROGRAM_ID,
+    MAYHEM_TOKEN_ACCOUNT,
+    MAYHEM_TRADING_WALLET, MAYHEM_USER_VOLUME_ACCUMULATOR
+} from "../utils/constants.js";
+import bs58 from "bs58";
+import {
+    GLOBAL_PDA, GLOBAL_VOLUME_ACCUMULATOR_PDA,
+    PUMP_EVENT_AUTHORITY_PDA, PUMP_FEE_CONFIG_PDA,
+    PUMP_FEE_PROGRAM_ID,
+    PUMP_PROGRAM_ID
+} from "@pump-fun/pump-sdk";
+import {TOKEN_2022_PROGRAM_ID} from "@solana/spl-token";
 
 export const inputAccounts = {
     buy: (tokenState, mint, tokenAccount, bondingCurve, vault, creatorVault) => [{
-        pubkey: new PublicKey("Gygj9QQby4j2jryqyqBHvLP7ctv2SaANgh4sCb69BUpA"), isSigner: true, isWritable: true
+        pubkey: new PublicKey(MAYHEM_TRADING_WALLET), isSigner: true, isWritable: true
     }, {
-        pubkey: new PublicKey("13ec7XdrjF3h3YcqBTFDSReRcUFwbCnJaAQspM4j6DDJ"), isSigner: false, isWritable: true
+        pubkey: new PublicKey(MAYHEM_GLOBAL_STATE), isSigner: false, isWritable: true
     }, {
         pubkey: new PublicKey(tokenState), isSigner: false, isWritable: true
     }, {
@@ -15,64 +36,64 @@ export const inputAccounts = {
     }, {
         pubkey: new PublicKey(tokenAccount), isSigner: false, isWritable: true
     }, {
-        pubkey: new PublicKey("BwWK17cbHxwWBKZkUYvzxLcNQ1YVyaFezduWbtm2de6s"), isSigner: false, isWritable: true
+        pubkey: new PublicKey(MAYHEM_TOKEN_ACCOUNT), isSigner: false, isWritable: true
     }, {
-        pubkey: new PublicKey("11111111111111111111111111111111"), isSigner: false, isWritable: false
+        pubkey: SystemProgram.programId, isSigner: false, isWritable: false
     }, {
-        pubkey: new PublicKey("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"), isSigner: false, isWritable: false
+        pubkey: TOKEN_2022_PROGRAM_ID, isSigner: false, isWritable: false
     }, {
-        pubkey: new PublicKey("4wTV1YmiEkRvAtNtsSGPtUrqRYQMe5SKy2uB4Jjaxnjf"), isSigner: false, isWritable: false
+        pubkey: GLOBAL_PDA, isSigner: false, isWritable: false
     }, {
         pubkey: new PublicKey(bondingCurve), isSigner: false, isWritable: true
     }, {
-        pubkey: new PublicKey("GesfTA3X2arioaHp8bbKdjG9vJtskViWACZoYvxp4twS"), isSigner: false, isWritable: true
+        pubkey: new PublicKey(MAYHEM_FEE_RECIPIENT), isSigner: false, isWritable: true
     }, {pubkey: new PublicKey(vault), isSigner: false, isWritable: true}, {
         pubkey: new PublicKey(creatorVault), isSigner: false, isWritable: true
     }, {
-        pubkey: new PublicKey("Ce6TQqeHC9p8KetsN6JsjHK7UTZk7nasjjnr7XxXp9F1"), isSigner: false, isWritable: false
-    }, {pubkey: new PublicKey("6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"), isSigner: false, isWritable: false}, {
-        pubkey: new PublicKey("Hq2wp8uJ9jCPsYgNHex8RtqdvMPfVGoYwjvF1ATiwn2Y"), isSigner: false, isWritable: true
-    }, {pubkey: new PublicKey("FGFrX2q1iAjyAojjeyFDxXqdmvegjPpSWsrPmrJjeQ2f"), isSigner: false, isWritable: true}, {
-        pubkey: new PublicKey("8Wf5TiAheLUqBrKXeYg2JtAFFMWtKdG2BSFgqUcPVwTt"), isSigner: false, isWritable: false
+        pubkey: PUMP_EVENT_AUTHORITY_PDA, isSigner: false, isWritable: false
+    }, {pubkey: PUMP_PROGRAM_ID, isSigner: false, isWritable: false}, {
+        pubkey: GLOBAL_VOLUME_ACCUMULATOR_PDA, isSigner: false, isWritable: true
+    }, {pubkey: new PublicKey(MAYHEM_USER_VOLUME_ACCUMULATOR), isSigner: false, isWritable: true}, {
+        pubkey: PUMP_FEE_CONFIG_PDA, isSigner: false, isWritable: false
     }, {
-        pubkey: new PublicKey("pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ"), isSigner: false, isWritable: false
+        pubkey: PUMP_FEE_PROGRAM_ID, isSigner: false, isWritable: false
     }, {
-        pubkey: new PublicKey("8FoNgzmjuSmiy86EPCWxvv1q7oJSu2WGA7wPymwki2LJ"), isSigner: false, isWritable: false
-    }, {pubkey: new PublicKey("MAyhSmzXzV1pTf7LsNkrNwkWKTo4ougAJ1PPg47MD4e"), isSigner: false, isWritable: false}],
+        pubkey: new PublicKey(MAYHEM_EVENT_AUTHORITY), isSigner: false, isWritable: false
+    }, {pubkey: new PublicKey(MAYHEM_PROGRAM_ID), isSigner: false, isWritable: false}],
 
     sell: (tokenState, mint, tokenAccount, bondingCurve, vault, creatorVault) => [{
-        pubkey: new PublicKey("Gygj9QQby4j2jryqyqBHvLP7ctv2SaANgh4sCb69BUpA"), isSigner: true, isWritable: true
+        pubkey: new PublicKey(MAYHEM_TRADING_WALLET), isSigner: true, isWritable: true
     }, {
-        pubkey: new PublicKey("13ec7XdrjF3h3YcqBTFDSReRcUFwbCnJaAQspM4j6DDJ"), isSigner: false, isWritable: true
+        pubkey: new PublicKey(MAYHEM_GLOBAL_STATE), isSigner: false, isWritable: true
     }, {
         pubkey: new PublicKey(tokenState), isSigner: false, isWritable: true
     }, {
-        pubkey: new PublicKey("BwWK17cbHxwWBKZkUYvzxLcNQ1YVyaFezduWbtm2de6s"), isSigner: false, isWritable: true
+        pubkey: new PublicKey(MAYHEM_TOKEN_ACCOUNT), isSigner: false, isWritable: true
     }, {
         pubkey: new PublicKey(mint), isSigner: false, isWritable: true
     }, {
         pubkey: new PublicKey(tokenAccount), isSigner: false, isWritable: true
     }, {
-        pubkey: new PublicKey("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"), isSigner: false, isWritable: false
+        pubkey: TOKEN_2022_PROGRAM_ID, isSigner: false, isWritable: false
     }, {
-        pubkey: new PublicKey("11111111111111111111111111111111"), isSigner: false, isWritable: false
+        pubkey: SystemProgram.programId, isSigner: false, isWritable: false
     }, {
-        pubkey: new PublicKey("4wTV1YmiEkRvAtNtsSGPtUrqRYQMe5SKy2uB4Jjaxnjf"), isSigner: false, isWritable: false
+        pubkey: GLOBAL_PDA, isSigner: false, isWritable: false
     }, {
         pubkey: new PublicKey(bondingCurve), isSigner: false, isWritable: true
     }, {
-        pubkey: new PublicKey("GesfTA3X2arioaHp8bbKdjG9vJtskViWACZoYvxp4twS"), isSigner: false, isWritable: true
+        pubkey: new PublicKey(MAYHEM_FEE_RECIPIENT), isSigner: false, isWritable: true
     }, {pubkey: new PublicKey(vault), isSigner: false, isWritable: true}, {
         pubkey: new PublicKey(creatorVault), isSigner: false, isWritable: true
     }, {
-        pubkey: new PublicKey("Ce6TQqeHC9p8KetsN6JsjHK7UTZk7nasjjnr7XxXp9F1"), isSigner: false, isWritable: false
-    }, {pubkey: new PublicKey("6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"), isSigner: false, isWritable: false}, {
-        pubkey: new PublicKey("8Wf5TiAheLUqBrKXeYg2JtAFFMWtKdG2BSFgqUcPVwTt"), isSigner: false, isWritable: false
+        pubkey: PUMP_EVENT_AUTHORITY_PDA, isSigner: false, isWritable: false
+    }, {pubkey: PUMP_PROGRAM_ID, isSigner: false, isWritable: false}, {
+        pubkey: PUMP_FEE_CONFIG_PDA, isSigner: false, isWritable: false
     }, {
-        pubkey: new PublicKey("pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ"), isSigner: false, isWritable: false
+        pubkey: PUMP_FEE_PROGRAM_ID, isSigner: false, isWritable: false
     }, {
-        pubkey: new PublicKey("8FoNgzmjuSmiy86EPCWxvv1q7oJSu2WGA7wPymwki2LJ"), isSigner: false, isWritable: false
-    }, {pubkey: new PublicKey("MAyhSmzXzV1pTf7LsNkrNwkWKTo4ougAJ1PPg47MD4e"), isSigner: false, isWritable: false}]
+        pubkey: new PublicKey(MAYHEM_EVENT_AUTHORITY), isSigner: false, isWritable: false
+    }, {pubkey: new PublicKey(MAYHEM_PROGRAM_ID), isSigner: false, isWritable: false}]
 }
 
 export async function simulateTransaction(type, marketCapInput, mint, tokenState, tokenAccount, bondingCurve, vault, creatorVault) {
@@ -106,7 +127,7 @@ export async function simulateTransaction(type, marketCapInput, mint, tokenState
         toPubkey: new PublicKey("DttWaMuVvTiduZRnguLF7jNxTgiMBZ1hyAumKUiL2KRL"),
         lamports: 100000
     }))
-    transaction.feePayer = new PublicKey("Gygj9QQby4j2jryqyqBHvLP7ctv2SaANgh4sCb69BUpA");
+    transaction.feePayer = new PublicKey(MAYHEM_TRADING_WALLET);
     transaction.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
 
     const simulation = await connection.simulateTransaction(transaction);

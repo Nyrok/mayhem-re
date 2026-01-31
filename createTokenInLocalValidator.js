@@ -26,7 +26,7 @@ const PUMP_PROGRAM_ID = new PublicKey("6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF
 const account = Keypair.fromSecretKey(bs58.decode(process.env.SECRET_KEY));
 const pumpSdk = new PumpSdk(connection);
 const global = pumpSdk.decodeGlobal(await connection.getAccountInfo(GLOBAL_PDA));
-const solAmount = new BN(10e9);
+let solAmount = new BN(0.06 * 1e9);
 
 if (await connection.getBalance(account.publicKey, 'confirmed') < 150 * 1e9) {
     await connection.confirmTransaction(await connection.requestAirdrop(account.publicKey, 200 * 1e9), 'confirmed');
@@ -54,8 +54,11 @@ const {blockhash} = await connection.getLatestBlockhash();
 const modifyComputeUnits = ComputeBudgetProgram.setComputeUnitLimit({
     units: 1_400_000,
 });
+const modifyComputePrice = ComputeBudgetProgram.setComputeUnitPrice({
+    microLamports: 1000000,
+});
 
-const instructions = [modifyComputeUnits, ...pumpInstructions];
+const instructions = [modifyComputeUnits, modifyComputePrice, ...pumpInstructions];
 
 const messageV0 = new TransactionMessage({
     payerKey: account.publicKey, recentBlockhash: blockhash, instructions,
@@ -89,9 +92,44 @@ try {
 
     const [creatorVaultPK] = PublicKey.findProgramAddressSync([Buffer.from("creator-vault"), account.publicKey.toBuffer()], PUMP_PROGRAM_ID);
     const bondingCurveInfo = await connection.getAccountInfo(bondingCurvePK);
-    const bondingCurveData = decodeBondingCurve(bondingCurveInfo.data);
-    const marketCap = 1000000000000000n * bondingCurveData.virtualSolReserves / bondingCurveData.virtualTokenReserves;
+    const bondingCurveData = pumpSdk.decodeBondingCurve(bondingCurveInfo);
+    const marketCap = BigInt(bondingCurveData.tokenTotalSupply.toNumber()) * BigInt(bondingCurveData.virtualSolReserves.toNumber()) / BigInt(bondingCurveData.virtualTokenReserves.toNumber());
     await simulateTransaction('buy', marketCap, mintKeypair.publicKey.toBase58(), mayhemStatePK, mayhemTokenAccountPK, bondingCurvePK, associatedBondingCurvePK, creatorVaultPK);
+    solAmount *= 5;
+    solAmount = new BN(solAmount);
+    const amount = getBuyTokenAmountFromSolAmount({
+        global,
+        amount: solAmount,
+        bondingCurve: bondingCurveData,
+        feeConfig: null,
+        mintSupply: bondingCurveData.tokenTotalSupply
+    });
+    const pumpBuyInstructions = await pumpSdk.buyInstructions({
+        global,
+        tokenProgram: TOKEN_2022_PROGRAM_ID,
+        bondingCurveAccountInfo: bondingCurveInfo,
+        bondingCurve: bondingCurveData,
+        mint: mintKeypair.publicKey,
+        associatedUserAccountInfo: await connection.getAccountInfo(account.publicKey),
+        user: account.publicKey,
+        solAmount,
+        amount,
+        slippage: 3000
+    });
+    const {blockhash: buyBlockhash} = await connection.getLatestBlockhash();
+    const buyTransaction = new VersionedTransaction(new TransactionMessage({
+        payerKey: account.publicKey,
+        recentBlockhash: buyBlockhash,
+        instructions: [modifyComputeUnits, modifyComputePrice, ...pumpBuyInstructions],
+    }).compileToV0Message());
+    buyTransaction.sign([account]);
+    const buyTx = await connection.sendTransaction(buyTransaction, {
+        skipPreflight: false, preflightCommitment: "confirmed",
+    });
+    await connection.confirmTransaction({
+        signature: buyTx, ...(await connection.getLatestBlockhash()),
+    });
+    console.log("Confirmed additional buy of", solAmount.toNumber(), "SOL")
 } catch (e) {
     if (e.logs) {
         console.log(e.logs.join('\n'));
@@ -102,4 +140,4 @@ try {
 
 await connection.onLogs(new PublicKey(MAYHEM_TRADING_WALLET), async (logs) => {
     console.log(logs);
-}, 'processed')
+}, 'processed');
