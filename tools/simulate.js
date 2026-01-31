@@ -25,7 +25,7 @@ import {
 import {TOKEN_2022_PROGRAM_ID} from "@solana/spl-token";
 
 export const inputAccounts = {
-    buy: (tokenState, mint, tokenAccount, bondingCurve, vault, creatorVault) => [{
+    buy: (tokenState, mint, tokenAccount, bondingCurve, associatedBondingCurve, creatorVault) => [{
         pubkey: new PublicKey(MAYHEM_TRADING_WALLET), isSigner: true, isWritable: true
     }, {
         pubkey: new PublicKey(MAYHEM_GLOBAL_STATE), isSigner: false, isWritable: true
@@ -47,7 +47,7 @@ export const inputAccounts = {
         pubkey: new PublicKey(bondingCurve), isSigner: false, isWritable: true
     }, {
         pubkey: new PublicKey(MAYHEM_FEE_RECIPIENT), isSigner: false, isWritable: true
-    }, {pubkey: new PublicKey(vault), isSigner: false, isWritable: true}, {
+    }, {pubkey: new PublicKey(associatedBondingCurve), isSigner: false, isWritable: true}, {
         pubkey: new PublicKey(creatorVault), isSigner: false, isWritable: true
     }, {
         pubkey: PUMP_EVENT_AUTHORITY_PDA, isSigner: false, isWritable: false
@@ -96,7 +96,7 @@ export const inputAccounts = {
     }, {pubkey: new PublicKey(MAYHEM_PROGRAM_ID), isSigner: false, isWritable: false}]
 }
 
-export async function simulateTransaction(type, marketCapInput, mint, tokenState, tokenAccount, bondingCurve, vault, creatorVault) {
+export async function simulateTransaction(type, marketCapInput, mint, tokenState, tokenAccount, bondingCurve, associatedBondingCurve, creatorVault) {
     const marketCapBuffer = Buffer.alloc(8);
     marketCapBuffer.writeBigInt64LE(marketCapInput);
 
@@ -114,7 +114,7 @@ export async function simulateTransaction(type, marketCapInput, mint, tokenState
         trailingData]);
 
     const instruction = new TransactionInstruction({
-        keys: inputAccounts[type](tokenState, mint, tokenAccount, bondingCurve, vault, creatorVault),
+        keys: inputAccounts[type](tokenState, mint, tokenAccount, bondingCurve, associatedBondingCurve, creatorVault),
         programId: MAYHEM_PROGRAM_ID,
         data: Buffer.from(originalData),
     });
