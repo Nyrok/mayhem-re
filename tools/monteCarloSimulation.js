@@ -278,7 +278,8 @@ class PlayerAgent {
         this.buyThreshold   = config.buyThreshold;
         this.sellThreshold  = config.sellThreshold;
 
-        this.solBalance   = BigInt(Math.floor(this.tradeSize * 1e9));
+        this.budget        = config.budget || this.tradeSize;
+        this.solBalance   = BigInt(Math.floor(this.budget * 1e9));
         this.initialSol   = this.solBalance;
         this.tokenBalance = 0n;
         this.tradeCount   = 0;
@@ -729,6 +730,7 @@ function parseArgs() {
         sellThreshold: 0.1,
         maxTrades: 20,
         maxPositionPct: 50,
+        budget: 0,
         initialBuy: 0,
         botBuyBias: 0.5,
         noiseActors: 0,
@@ -765,6 +767,8 @@ function parseArgs() {
             config.sellThreshold = parseFloat(arg.split('=')[1]);
         } else if (arg.startsWith('--maxTrades=')) {
             config.maxTrades = parseInt(arg.split('=')[1]);
+        } else if (arg.startsWith('--budget=')) {
+            config.budget = parseFloat(arg.split('=')[1]);
         } else if (arg.startsWith('--initialBuy=')) {
             config.initialBuy = parseFloat(arg.split('=')[1]);
         } else if (arg.startsWith('--botBuyBias=')) {
@@ -798,7 +802,7 @@ function main() {
         console.log(`MONTE CARLO SIMULATION — Mayhem Bot Trading Strategies`);
         console.log(`${'═'.repeat(70)}`);
         console.log(`Simulations per strategy: ${config.numSimulations.toLocaleString()}`);
-        console.log(`Trade size: ${config.tradeSize} SOL`);
+        console.log(`Trade size: ${config.tradeSize} SOL${config.budget ? ` | Budget: ${config.budget} SOL` : ''}`);
         console.log(`Stop loss: ${config.stopLoss}% | Take profit: ${config.takeProfit}%`);
         if (config.initialBuy > 0) console.log(`Initial buy: ${config.initialBuy} SOL (at token creation)`);
         if (config.botBuyBias !== 0.5) console.log(`Bot buy bias: ${config.botBuyBias} (${(config.botBuyBias * 100).toFixed(0)}% buy / ${((1 - config.botBuyBias) * 100).toFixed(0)}% sell)`);
