@@ -1,0 +1,131 @@
+{
+  "mint": "4t91F9s8W8u6UWDsvhAkAW5QGZJsw9T8WPyzeFC8pump",
+  "extractedAt": "2026-02-15T02:23:30.601Z",
+  "totalTrades": 10,
+  "metrics": {
+    "buyCount": 6,
+    "sellCount": 4
+  },
+  "trades": [
+    {
+      "slot": 400333764,
+      "blockTime": 1771122031,
+      "mint": "4t91F9s8W8u6UWDsvhAkAW5QGZJsw9T8WPyzeFC8pump",
+      "action": "buy",
+      "solAmount": "15802469",
+      "tokenAmount": "701414538653",
+      "virtualSolReserves": "28894839951",
+      "virtualTokenReserves": "1069480000688264",
+      "realSolReserves": "94814815",
+      "realTokenReserves": "789580000688264"
+    },
+    {
+      "slot": 400333768,
+      "blockTime": 1771122033,
+      "mint": "4t91F9s8W8u6UWDsvhAkAW5QGZJsw9T8WPyzeFC8pump",
+      "action": "sell",
+      "solAmount": "18962962",
+      "tokenAmount": "702333982469",
+      "virtualSolReserves": "23131002786",
+      "virtualTokenReserves": "1070182334670733",
+      "realSolReserves": "75851853",
+      "realTokenReserves": "790282334670733"
+    },
+    {
+      "slot": 400333771,
+      "blockTime": 1771122034,
+      "mint": "4t91F9s8W8u6UWDsvhAkAW5QGZJsw9T8WPyzeFC8pump",
+      "action": "buy",
+      "solAmount": "15170370",
+      "tokenAmount": "701414522176",
+      "virtualSolReserves": "27739070305",
+      "virtualTokenReserves": "1069480920148557",
+      "realSolReserves": "91022223",
+      "realTokenReserves": "789580920148557"
+    },
+    {
+      "slot": 400333775,
+      "blockTime": 1771122036,
+      "mint": "4t91F9s8W8u6UWDsvhAkAW5QGZJsw9T8WPyzeFC8pump",
+      "action": "sell",
+      "solAmount": "18204443",
+      "tokenAmount": "702333960906",
+      "virtualSolReserves": "22205782031",
+      "virtualTokenReserves": "1070183254109463",
+      "realSolReserves": "72817780",
+      "realTokenReserves": "790283254109463"
+    },
+    {
+      "slot": 400333778,
+      "blockTime": 1771122037,
+      "mint": "4t91F9s8W8u6UWDsvhAkAW5QGZJsw9T8WPyzeFC8pump",
+      "action": "buy",
+      "solAmount": "113328987",
+      "tokenAmount": "5200745794880",
+      "virtualSolReserves": "27107589740",
+      "virtualTokenReserves": "1041700805463987",
+      "realSolReserves": "679973926",
+      "realTokenReserves": "761800805463987"
+    },
+    {
+      "slot": 400333782,
+      "blockTime": 1771122038,
+      "mint": "4t91F9s8W8u6UWDsvhAkAW5QGZJsw9T8WPyzeFC8pump",
+      "action": "sell",
+      "solAmount": "135994784",
+      "tokenAmount": "5252410074738",
+      "virtualSolReserves": "21792673409",
+      "virtualTokenReserves": "1046953215538725",
+      "realSolReserves": "543979142",
+      "realTokenReserves": "767053215538725"
+    },
+    {
+      "slot": 400333785,
+      "blockTime": 1771122039,
+      "mint": "4t91F9s8W8u6UWDsvhAkAW5QGZJsw9T8WPyzeFC8pump",
+      "action": "buy",
+      "solAmount": "108795828",
+      "tokenAmount": "5200753462209",
+      "virtualSolReserves": "26024544283",
+      "virtualTokenReserves": "1041752462076516",
+      "realSolReserves": "652774970",
+      "realTokenReserves": "761852462076516"
+    },
+    {
+      "slot": 400333789,
+      "blockTime": 1771122041,
+      "mint": "4t91F9s8W8u6UWDsvhAkAW5QGZJsw9T8WPyzeFC8pump",
+      "action": "buy",
+      "solAmount": "113022680",
+      "tokenAmount": "4535125830632",
+      "virtualSolReserves": "30992162724",
+      "virtualTokenReserves": "1040738254992732",
+      "realSolReserves": "678136080",
+      "realTokenReserves": "760838254992732"
+    },
+    {
+      "slot": 400333793,
+      "blockTime": 1771122042,
+      "mint": "4t91F9s8W8u6UWDsvhAkAW5QGZJsw9T8WPyzeFC8pump",
+      "action": "sell",
+      "solAmount": "135627215",
+      "tokenAmount": "4574474411515",
+      "virtualSolReserves": "24900324358",
+      "virtualTokenReserves": "1045312729404247",
+      "realSolReserves": "542508865",
+      "realTokenReserves": "765412729404247"
+    },
+    {
+      "slot": 400333796,
+      "blockTime": 1771122044,
+      "mint": "4t91F9s8W8u6UWDsvhAkAW5QGZJsw9T8WPyzeFC8pump",
+      "action": "buy",
+      "solAmount": "108501773",
+      "tokenAmount": "4535130273037",
+      "virtualSolReserves": "29753576424",
+      "virtualTokenReserves": "1040777599131210",
+      "realSolReserves": "651010638",
+      "realTokenReserves": "760877599131210"
+    }
+  ]
+}

@@ -36,6 +36,14 @@ function replayDataset(trades, config) {
     let botSells = 0;
     let mcEntered = false;
     let mcWatchStart = null;
+    let flipBuyNext = true;
+    let roundTripEntrySOL = 0n;
+    let initialBuyDone = false;
+    let initialTokens = 0n;
+    let flipSkipBuy = false;
+    let mcapPeaked = false;
+    let holdEntryDone = false;
+    let lastBotBuyMcap = null;
 
     // SmartDipAccumulator state
     let priceHistory = [];
@@ -43,8 +51,14 @@ function replayDataset(trades, config) {
     let trailingActive = false;
     let smartExit = false;
 
+    // flipScalper: no initial buy — wait for mcap >= 30 then FLIP BUY on first bot sell
+    if (config.strategy === 'flipScalper') {
+        flipBuyNext = true;
+    }
+
     for (let i = 0; i < trades.length; i++) {
         const trade = trades[i];
+        flipSkipBuy = false; // reset per-trade flag
         if (trade.action === 'buy') botBuys++;
         else botSells++;
         const curve = new BondingCurve();
@@ -52,6 +66,18 @@ function replayDataset(trades, config) {
         curve.virtualTokenReserves = BigInt(trade.virtualTokenReserves) - playerTokenDelta;
         curve.realSolReserves = BigInt(trade.realSolReserves) + playerSolDelta;
         curve.realTokenReserves = BigInt(trade.realTokenReserves) - playerTokenDelta;
+
+        // flipScalper/holdReversal: mcap tracking + exit (only after peaked above entry mcap)
+        if (config.strategy === 'flipScalper' || config.strategy === 'holdReversal') {
+            const mcap = Number(1_000_000_000_000_000n * curve.virtualSolReserves / curve.virtualTokenReserves) / 1e9;
+            const entryMcap = config.flipEntryMcap || 30;
+            if (mcap >= entryMcap) mcapPeaked = true;
+            if (mcapPeaked && mcap < entryMcap) {
+                exitReason = 'MCAP30';
+                if (tokenBalance > 0n) { solBalance += curve.executeSell(tokenBalance); tokenBalance = 0n; }
+                break;
+            }
+        }
 
         // Market cap floor: sell & exit if mcap drops below threshold
         if (config.mcapFloor > 0) {
@@ -66,6 +92,25 @@ function replayDataset(trades, config) {
             }
         }
 
+        // holdReversal: track lastBotBuyMcap + reversal exit
+        if (config.strategy === 'holdReversal') {
+            const mcap = Number(1_000_000_000_000_000n * curve.virtualSolReserves / curve.virtualTokenReserves) / 1e9;
+            if (trade.action === 'buy') lastBotBuyMcap = mcap;
+            if (holdEntryDone && lastBotBuyMcap !== null && mcap < lastBotBuyMcap) {
+                exitReason = 'REVERSAL';
+                if (tokenBalance > 0n) {
+                    const vSolBefore = curve.virtualSolReserves;
+                    const vTokenBefore = curve.virtualTokenReserves;
+                    solBalance += curve.executeSell(tokenBalance);
+                    playerSolDelta += curve.virtualSolReserves - vSolBefore;
+                    playerTokenDelta += vTokenBefore - curve.virtualTokenReserves;
+                    tokenBalance = 0n;
+                    sellCount++; tradeCount++;
+                }
+                break;
+            }
+        }
+
         // momentumConfirmed: kill switch
         if (config.strategy === 'momentumConfirmed' && mcEntered && tokenBalance > 0n && config.killSwitch > 0) {
             const excess = botSells - botBuys;
@@ -74,6 +119,23 @@ function replayDataset(trades, config) {
                 solBalance += curve.executeSell(tokenBalance);
                 tokenBalance = 0n;
                 break;
+            }
+        }
+
+        // flipScalper: stop if flip P&L < 0 — sell ALL tokens
+        if (config.strategy === 'flipScalper' && tokenBalance > 0n && roundTripEntrySOL > 0n) {
+            const flipValue = curve.getSolForTokens(tokenBalance);
+            if (flipValue < roundTripEntrySOL) {
+                const vSolBefore = curve.virtualSolReserves;
+                const vTokenBefore = curve.virtualTokenReserves;
+                solBalance += curve.executeSell(tokenBalance);
+                playerSolDelta += curve.virtualSolReserves - vSolBefore;
+                playerTokenDelta += vTokenBefore - curve.virtualTokenReserves;
+                tokenBalance = 0n;
+                sellCount++; tradeCount++;
+                flipBuyNext = true;
+                roundTripEntrySOL = 0n;
+                flipSkipBuy = true;
             }
         }
 
@@ -155,6 +217,19 @@ function replayDataset(trades, config) {
                 tokenBalance = 0n;
                 sellCount++;
                 tradeCount++;
+            }
+        } else if (config.strategy === 'flipScalper') {
+            if (trade.action === 'sell' && !flipBuyNext && tokenBalance > 0n) {
+                // FLIP SELL — sell ALL tokens
+                const vSolBefore = curve.virtualSolReserves;
+                const vTokenBefore = curve.virtualTokenReserves;
+                solBalance += curve.executeSell(tokenBalance);
+                playerSolDelta += curve.virtualSolReserves - vSolBefore;
+                playerTokenDelta += vTokenBefore - curve.virtualTokenReserves;
+                tokenBalance = 0n;
+                sellCount++; tradeCount++;
+                flipBuyNext = true;
+                roundTripEntrySOL = 0n;
             }
         } else if (config.strategy === 'smartDipAccumulator' && tokenBalance > 0n) {
             const tokenValue = curve.getSolForTokens(tokenBalance);
@@ -273,6 +348,18 @@ function replayDataset(trades, config) {
                     return trade.action === 'buy' && consecutiveBuys >= config.buyStreak;
                 case 'buyStreak':
                     return trade.action === 'buy' && consecutiveBuys >= config.buyStreak;
+                case 'flipScalper': {
+                    if (trade.action !== 'sell') return false;
+                    if (flipSkipBuy) return false;
+                    if (!flipBuyNext) return false;
+                    const flipMcap = Number(1_000_000_000_000_000n * curve.virtualSolReserves / curve.virtualTokenReserves) / 1e9;
+                    return flipMcap >= (config.flipEntryMcap || 30);
+                }
+                case 'holdReversal': {
+                    if (holdEntryDone) return false;
+                    const hrMcap = Number(1_000_000_000_000_000n * curve.virtualSolReserves / curve.virtualTokenReserves) / 1e9;
+                    return hrMcap >= (config.flipEntryMcap || 60);
+                }
                 case 'momentumConfirmed':
                     return false;
                 case 'smartDipAccumulator': {
@@ -327,6 +414,14 @@ function replayDataset(trades, config) {
                 tokenBalance += tokensReceived;
                 solBalance -= buyAmount;
                 tradeCount++;
+
+                if (config.strategy === 'flipScalper') {
+                    roundTripEntrySOL = buyAmount;
+                    flipBuyNext = false;
+                }
+                if (config.strategy === 'holdReversal') {
+                    holdEntryDone = true;
+                }
             }
         }
 
@@ -335,7 +430,7 @@ function replayDataset(trades, config) {
         const portfolio = solBalance + tokenValue;
         const pnlPct = Number(portfolio - initialBudget) / Number(initialBudget) * 100;
 
-        if (pnlPct >= config.takeProfit) {
+        if (config.strategy !== 'flipScalper' && config.strategy !== 'holdReversal' && pnlPct >= config.takeProfit) {
             exitReason = 'TP';
             if (tokenBalance > 0n) {
                 solBalance += curve.executeSell(tokenBalance);
@@ -343,7 +438,7 @@ function replayDataset(trades, config) {
             }
             break;
         }
-        if (pnlPct <= -config.stopLoss) {
+        if (config.strategy !== 'flipScalper' && config.strategy !== 'holdReversal' && pnlPct <= -config.stopLoss) {
             exitReason = 'SL';
             if (tokenBalance > 0n) {
                 solBalance += curve.executeSell(tokenBalance);
@@ -382,7 +477,7 @@ function replayDataset(trades, config) {
 function generateConfigs(strategyFilter) {
     const configs = [];
 
-    if (!strategyFilter || (strategyFilter !== 'smartDipAccumulator' && strategyFilter !== 'proportionalDip' && strategyFilter !== 'momentumConfirmed')) {
+    if (!strategyFilter || (strategyFilter !== 'smartDipAccumulator' && strategyFilter !== 'proportionalDip' && strategyFilter !== 'momentumConfirmed' && strategyFilter !== 'flipScalper' && strategyFilter !== 'holdReversal')) {
         const strategies = ['dipAccumulator', 'streakReversal', 'scalper', 'momentumRider', 'buyStreak'];
         const filteredStrategies = strategyFilter ? strategies.filter(s => s === strategyFilter) : strategies;
         const tradeSizes = [0.001, 0.005, 0.01, 0.02, 0.05, 0.1];
@@ -532,6 +627,42 @@ function generateConfigs(strategyFilter) {
         }
     }
 
+    // flipScalper configs
+    if (!strategyFilter || strategyFilter === 'flipScalper') {
+        for (const tradeSize of [0.05, 0.1, 0.2, 0.3]) {
+            for (const budget of [0.5, 1.0]) {
+                for (const flipEntryMcap of [30, 35, 40, 45, 50, 60]) {
+                    configs.push({
+                        strategy: 'flipScalper',
+                        tradeSize, budget, flipEntryMcap,
+                        takeProfit: 100, stopLoss: 100,  // effectively disabled
+                        maxBuys: 0, maxPositionPct: 100,
+                        sellStreak: 1, buyStreak: 1,
+                        mcapFloor: 0,
+                    });
+                }
+            }
+        }
+    }
+
+    // holdReversal configs
+    if (!strategyFilter || strategyFilter === 'holdReversal') {
+        for (const tradeSize of [0.1, 0.2, 0.3]) {
+            for (const budget of [0.5, 1.0]) {
+                for (const flipEntryMcap of [30, 40, 50, 60, 70]) {
+                    configs.push({
+                        strategy: 'holdReversal',
+                        tradeSize, budget, flipEntryMcap,
+                        takeProfit: 100, stopLoss: 100,
+                        maxBuys: 0, maxPositionPct: 100,
+                        sellStreak: 1, buyStreak: 1,
+                        mcapFloor: 0,
+                    });
+                }
+            }
+        }
+    }
+
     return configs;
 }
 
@@ -635,6 +766,7 @@ const top = results.slice(0, cliConfig.top);
 const isSDA = cliConfig.strategy === 'smartDipAccumulator';
 const isPD = cliConfig.strategy === 'proportionalDip';
 const isMC = cliConfig.strategy === 'momentumConfirmed';
+const isFlip = cliConfig.strategy === 'flipScalper' || cliConfig.strategy === 'holdReversal';
 console.log(`TOP ${top.length} CONFIGS (by wallet return on ${datasets.length} tokens)`);
 if (isSDA) {
     console.log('─'.repeat(180));
@@ -648,6 +780,10 @@ if (isSDA) {
     console.log('─'.repeat(170));
     console.log(` ${'#'.padStart(3)} | ${'Appr'.padStart(4)} | ${'Size'.padStart(5)} | ${'Ratio'.padStart(5)} | ${'Score'.padStart(5)} | ${'TP%'.padStart(5)} | ${'MaxB'.padStart(4)} | ${'Kill'.padStart(4)} | ${'MeanP&L'.padStart(9)} | ${'WinRate'.padStart(7)} | ${'Wallet'.padStart(8)} | ${'WalletRet'.padStart(10)} | ${'Exit'.padStart(6)}`);
     console.log('─'.repeat(170));
+} else if (isFlip) {
+    console.log('─'.repeat(130));
+    console.log(` ${'#'.padStart(3)} | ${'Size'.padStart(6)} | ${'Budget'.padStart(6)} | ${'Entry'.padStart(5)} | ${'MeanP&L'.padStart(9)} | ${'WinRate'.padStart(7)} | ${'Wallet'.padStart(8)} | ${'WalletRet'.padStart(10)} | ${'Exit'.padStart(6)}`);
+    console.log('─'.repeat(140));
 } else {
     console.log('─'.repeat(140));
     console.log(` ${'#'.padStart(3)} | ${'Strategy'.padEnd(16)} | ${'Size'.padStart(6)} | ${'Budget'.padStart(6)} | ${'TP%'.padStart(5)} | ${'SL%'.padStart(5)} | ${'Streak'.padStart(6)} | ${'MaxB'.padStart(4)} | ${'MaxP%'.padStart(5)} | ${'MeanP&L'.padStart(9)} | ${'WinRate'.padStart(7)} | ${'Wallet'.padStart(8)} | ${'WalletRet'.padStart(10)}`);
@@ -676,13 +812,18 @@ for (let i = 0; i < top.length; i++) {
         for (const m of r.perMint) { exits[m.exitReason] = (exits[m.exitReason] || 0) + 1; }
         const exitStr = Object.entries(exits).map(([k,v]) => `${k}:${v}`).join(' ');
         console.log(` ${String(i+1).padStart(3)} | ${c.approach.padStart(4)} | ${c.tradeSize.toFixed(1).padStart(5)} | ${(c.entryRatio || 0).toFixed(1).padStart(5)} | ${(c.scoreThreshold || 0).toFixed(1).padStart(5)} | ${c.takeProfit.toString().padStart(5)} | ${c.maxBuys.toString().padStart(4)} | ${c.killSwitch.toString().padStart(4)} | ${(r.meanPnlPct >= 0 ? '+' : '') + r.meanPnlPct.toFixed(4).padStart(8)}% | ${(r.winRate.toFixed(0) + '%').padStart(7)} | ${walletStr.padStart(8)} | ${walletRetStr.padStart(10)} | ${exitStr}`);
+    } else if (isFlip) {
+        const exits = {};
+        for (const m of r.perMint) { exits[m.exitReason] = (exits[m.exitReason] || 0) + 1; }
+        const exitStr = Object.entries(exits).map(([k,v]) => `${k}:${v}`).join(' ');
+        console.log(` ${String(i+1).padStart(3)} | ${c.tradeSize.toString().padStart(6)} | ${c.budget.toString().padStart(6)} | ${(c.flipEntryMcap || 30).toString().padStart(5)} | ${(r.meanPnlPct >= 0 ? '+' : '') + r.meanPnlPct.toFixed(4).padStart(8)}% | ${(r.winRate.toFixed(0) + '%').padStart(7)} | ${walletStr.padStart(8)} | ${walletRetStr.padStart(10)} | ${exitStr}`);
     } else {
         const streakKey = ['momentumRider', 'buyStreak'].includes(c.strategy) ? c.buyStreak : c.sellStreak;
         console.log(` ${String(i+1).padStart(3)} | ${c.strategy.padEnd(16)} | ${c.tradeSize.toString().padStart(6)} | ${c.budget.toString().padStart(6)} | ${c.takeProfit.toString().padStart(5)} | ${c.stopLoss.toString().padStart(5)} | ${streakKey.toString().padStart(6)} | ${c.maxBuys.toString().padStart(4)} | ${c.maxPositionPct.toString().padStart(5)} | ${(r.meanPnlPct >= 0 ? '+' : '') + r.meanPnlPct.toFixed(4).padStart(8)}% | ${(r.winRate.toFixed(0) + '%').padStart(7)} | ${walletStr.padStart(8)} | ${walletRetStr.padStart(10)}`);
     }
 }
 
-console.log('─'.repeat(isSDA ? 180 : isPD ? 170 : isMC ? 170 : 140));
+console.log('─'.repeat(isSDA ? 180 : isPD ? 170 : isMC ? 170 : isFlip ? 130 : 140));
 
 // Print summary
 const profitable = results.filter(r => r.walletReturn > 0);

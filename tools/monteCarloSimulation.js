@@ -38,7 +38,7 @@ const BOT_TRADE_NUM    = 20n;  // numerator: 20%
 const BOT_TRADE_DEN    = 100n; // denominator
 const BOT_MAX_BUY_SOL  = 20_000_000_000n; // 20 SOL cap observed on-chain
 
-const ALL_STRATEGIES = ['buyAndHold', 'followMomentum', 'contrarian', 'threshold', 'dca', 'quickFlip', 'dipAccumulator'];
+const ALL_STRATEGIES = ['buyAndHold', 'followMomentum', 'contrarian', 'threshold', 'dca', 'quickFlip', 'dipAccumulator', 'streakReversal', 'smartDipAccumulator', 'proportionalDip'];
 
 // ═══════════════════════════════════════════════════════════════════════════
 // SeededRandom — LCG 64-bit PRNG for deterministic results
@@ -89,7 +89,8 @@ class BondingCurve {
     // Pure calculation: how much SOL would tokenAmount yield (after fee)
     getSolForTokens(tokenAmount) {
         if (tokenAmount <= 0n) return 0n;
-        const solBeforeFee = tokenAmount * this.virtualSolReserves / (this.virtualTokenReserves + tokenAmount);
+        let solBeforeFee = tokenAmount * this.virtualSolReserves / (this.virtualTokenReserves + tokenAmount);
+        if (solBeforeFee > this.realSolReserves) solBeforeFee = this.realSolReserves;
         const fee = solBeforeFee * FEE_BASIS_POINTS / BASIS_POINTS;
         return solBeforeFee - fee;
     }
@@ -114,10 +115,10 @@ class BondingCurve {
     executeSell(tokenAmount) {
         if (tokenAmount <= 0n) return 0n;
 
-        const solBeforeFee = tokenAmount * this.virtualSolReserves / (this.virtualTokenReserves + tokenAmount);
+        let solBeforeFee = tokenAmount * this.virtualSolReserves / (this.virtualTokenReserves + tokenAmount);
 
-        // Guard: can't extract more SOL than the pool actually holds
-        if (solBeforeFee > this.realSolReserves) return 0n;
+        // Cap at real reserves (can't extract more SOL than the pool holds)
+        if (solBeforeFee > this.realSolReserves) solBeforeFee = this.realSolReserves;
 
         const fee = solBeforeFee * FEE_BASIS_POINTS / BASIS_POINTS;
         const solOut = solBeforeFee - fee;
@@ -278,6 +279,9 @@ class PlayerAgent {
         this.buyThreshold   = config.buyThreshold;
         this.sellThreshold  = config.sellThreshold;
 
+        this.priceTaker    = config.priceTaker || false;
+        this.maxBuys       = config.maxBuys || 0;
+        this.sellStreak    = config.sellStreak || 1;
         this.budget        = config.budget || this.tradeSize;
         this.solBalance   = BigInt(Math.floor(this.budget * 1e9));
         this.initialSol   = this.solBalance;
@@ -286,6 +290,27 @@ class PlayerAgent {
         this.entryPrice   = 0;
         this.referencePrice = 0;
         this.exited       = false;
+        this.consecutiveSells = 0;
+
+        // SmartDipAccumulator params
+        this.momentumWindow = config.momentumWindow || 5;
+        this.momentumThreshold = config.momentumThreshold || 0.30;
+        this.maxImpactPct = config.maxImpactPct || 30;
+        this.curveScaleThreshold = config.curveScaleThreshold || 0.5;
+        this.minScaleFactor = config.minScaleFactor || 0.2;
+        this.trailActivation = config.trailActivation || 5;
+        this.trailDistance = config.trailDistance || 3;
+        this.reversalExitStreak = config.reversalExitStreak || 3;
+
+        // SmartDipAccumulator state
+        this.priceHistory = [];
+        this.peakPnlPct = 0;
+        this.trailingActive = false;
+
+        // ProportionalDip params
+        this.scaleThreshold = config.scaleThreshold || 0.5;
+        this.minScale = config.minScale || 0.05;
+        this.maxScale = config.maxScale || 2.0;
     }
 
     // Portfolio value = SOL balance + current market value of tokens
@@ -319,27 +344,53 @@ class PlayerAgent {
         if (solAmount > this.solBalance) solAmount = this.solBalance;
         if (solAmount <= 0n) return;
 
-        // Max position: cap at maxPositionPct% of pool's real SOL reserves
+        // Apply maxPositionPct clamp (both modes)
         const maxSol = curve.realSolReserves * BigInt(this.maxPositionPct) / 100n;
         if (maxSol > 0n && solAmount > maxSol) solAmount = maxSol;
         if (solAmount > this.solBalance) solAmount = this.solBalance;
         if (solAmount <= 0n) return;
 
-        const tokens = curve.executeBuy(solAmount);
-        this.tokenBalance += tokens;
-        this.solBalance -= solAmount;
-        this.tradeCount++;
-
-        if (this.entryPrice === 0) this.entryPrice = curve.getPriceFloat();
+        if (this.priceTaker) {
+            const tokens = curve.getTokensForSol(solAmount);
+            this.tokenBalance += tokens;
+            this.solBalance -= solAmount;
+            this.tradeCount++;
+            if (this.entryPrice === 0) this.entryPrice = curve.getPriceFloat();
+        } else {
+            const tokens = curve.executeBuy(solAmount);
+            this.tokenBalance += tokens;
+            this.solBalance -= solAmount;
+            this.tradeCount++;
+            if (this.entryPrice === 0) this.entryPrice = curve.getPriceFloat();
+        }
     }
 
     _sellAll(curve) {
         if (this.tokenBalance <= 0n) return;
-        const sol = curve.executeSell(this.tokenBalance);
-        this.solBalance += sol;
+        if (this.priceTaker) {
+            const sol = curve.getSolForTokens(this.tokenBalance);
+            this.solBalance += sol;
+        } else {
+            const sol = curve.executeSell(this.tokenBalance);
+            this.solBalance += sol;
+        }
         this.tokenBalance = 0n;
         this.tradeCount++;
         this.exited = true;
+    }
+
+    // Sell all tokens but stay in the game (don't set exited)
+    _sellAllTokens(curve) {
+        if (this.tokenBalance <= 0n) return;
+        if (this.priceTaker) {
+            const sol = curve.getSolForTokens(this.tokenBalance);
+            this.solBalance += sol;
+        } else {
+            const sol = curve.executeSell(this.tokenBalance);
+            this.solBalance += sol;
+        }
+        this.tokenBalance = 0n;
+        this.tradeCount++;
     }
 
     // Called after each bot trade
@@ -363,6 +414,12 @@ class PlayerAgent {
                 return this._quickFlip(curve, botAction, size);
             case 'dipAccumulator':
                 return this._dipAccumulator(curve, botAction, size);
+            case 'streakReversal':
+                return this._streakReversal(curve, botAction, size);
+            case 'smartDipAccumulator':
+                return this._smartDipAccumulator(curve, botAction, size);
+            case 'proportionalDip':
+                return this._proportionalDip(curve, botAction, size);
         }
     }
 
@@ -424,8 +481,134 @@ class PlayerAgent {
     // Strategy 7: Accumulate on dips — buy when bot sells, never explicitly sell
     // Exits only via _checkRisk (takeProfit/stopLoss) or forceExit
     _dipAccumulator(curve, botAction, size) {
-        if (botAction === 'sell' && this.solBalance > 0n) {
+        if (botAction === 'sell') {
+            this.consecutiveSells++;
+        } else {
+            this.consecutiveSells = 0;
+        }
+
+        if (botAction === 'sell' && this.consecutiveSells >= this.sellStreak
+            && this.solBalance > 0n
+            && (this.maxBuys === 0 || this.tradeCount < this.maxBuys)) {
             this._buy(curve, size);
+        }
+    }
+
+    // Strategy 8: Wait for N consecutive sells, buy at the deep dip, sell on first bot buy
+    // Re-entrant: can do multiple buy-sell cycles per simulation
+    _streakReversal(curve, botAction, size) {
+        if (botAction === 'sell') {
+            this.consecutiveSells++;
+        } else {
+            this.consecutiveSells = 0;
+        }
+
+        // Sell all on first bot buy after we hold tokens (capture the bounce)
+        if (botAction === 'buy' && this.tokenBalance > 0n) {
+            this._sellAllTokens(curve);
+        }
+
+        // Buy after N consecutive sells
+        if (botAction === 'sell' && this.consecutiveSells >= this.sellStreak
+            && this.solBalance > 0n
+            && (this.maxBuys === 0 || this.tradeCount < this.maxBuys)) {
+            this._buy(curve, size);
+        }
+    }
+
+    // Strategy 9: Smart dip accumulator — momentum-filtered buying with trailing stop
+    _smartDipAccumulator(curve, botAction, size) {
+        // 1. Record price history
+        const currentPrice = curve.getPriceFloat();
+        this.priceHistory.push(currentPrice);
+        if (this.priceHistory.length > this.momentumWindow) {
+            this.priceHistory.shift();
+        }
+
+        // 2. Track consecutive sells (same as dipAccumulator)
+        if (botAction === 'sell') {
+            this.consecutiveSells++;
+        } else {
+            this.consecutiveSells = 0;
+        }
+
+        // 3. Exit checks (only when holding tokens)
+        if (this.tokenBalance > 0n) {
+            const tokenValue = curve.getSolForTokens(this.tokenBalance);
+            const portfolio = this.solBalance + tokenValue;
+            const pnlPct = Number(portfolio - this.initialSol) / Number(this.initialSol) * 100;
+
+            // Track peak PnL
+            if (pnlPct > this.peakPnlPct) this.peakPnlPct = pnlPct;
+
+            // 3a. Momentum reversal exit (only in profit)
+            if (this.reversalExitStreak > 0 && pnlPct > 0
+                && this.consecutiveSells >= this.reversalExitStreak) {
+                this._sellAll(curve);
+                return;
+            }
+
+            // 3b. Trailing stop
+            if (this.peakPnlPct >= this.trailActivation) {
+                this.trailingActive = true;
+            }
+            if (this.trailingActive) {
+                const dynamicSL = this.peakPnlPct - this.trailDistance;
+                if (pnlPct <= dynamicSL) {
+                    this._sellAll(curve);
+                    return;
+                }
+            }
+        }
+
+        // 4. Entry logic: only on bot sell with streak threshold
+        if (botAction !== 'sell') return;
+        if (this.consecutiveSells < this.sellStreak) return;
+        if (this.solBalance <= 0n) return;
+        if (this.maxBuys > 0 && this.tradeCount >= this.maxBuys) return;
+
+        // 4a. Momentum filter
+        if (this.priceHistory.length >= this.momentumWindow) {
+            const oldPrice = this.priceHistory[0];
+            const momentumROC = (currentPrice - oldPrice) / oldPrice;
+            if (momentumROC < -this.momentumThreshold) return; // skip: freefall
+        }
+
+        // 4b. Impact check
+        if (this.tokenBalance > 0n && curve.realTokenReserves > 0n) {
+            const playerShare = Number(this.tokenBalance) / Number(curve.realTokenReserves) * 100;
+            if (playerShare > this.maxImpactPct) return; // skip: too exposed
+        }
+
+        // 4c. Curve position sizing
+        const realSolFloat = Number(curve.realSolReserves) / 1e9;
+        const scaleFactor = Math.min(1.0,
+            Math.max(this.minScaleFactor, realSolFloat / this.curveScaleThreshold));
+        const adjustedSize = BigInt(Math.floor(Number(size) * scaleFactor));
+
+        // 5. Execute buy
+        if (adjustedSize > 0n) {
+            this._buy(curve, adjustedSize);
+        }
+    }
+
+    // Strategy 10: Proportional dip accumulator — buy amount scales with pool size
+    _proportionalDip(curve, botAction, size) {
+        if (botAction === 'sell') {
+            this.consecutiveSells++;
+        } else {
+            this.consecutiveSells = 0;
+        }
+
+        if (botAction === 'sell' && this.consecutiveSells >= this.sellStreak
+            && this.solBalance > 0n
+            && (this.maxBuys === 0 || this.tradeCount < this.maxBuys)) {
+            const realSolFloat = Number(curve.realSolReserves) / 1e9;
+            const scale = Math.min(this.maxScale, Math.max(this.minScale, realSolFloat / this.scaleThreshold));
+            const adjustedSize = BigInt(Math.floor(Number(size) * scale));
+            if (adjustedSize > 0n) {
+                this._buy(curve, adjustedSize);
+            }
         }
     }
 
@@ -732,11 +915,25 @@ function parseArgs() {
         maxPositionPct: 50,
         budget: 0,
         initialBuy: 0,
+        maxBuys: 0,
+        sellStreak: 1,
         botBuyBias: 0.5,
+        priceTaker: false,
         noiseActors: 0,
         noiseProbability: 0.3,
         noiseSize: 0.1,
         noiseSizeMax: null,
+        momentumWindow: 5,
+        momentumThreshold: 0.30,
+        maxImpactPct: 30,
+        curveScaleThreshold: 0.5,
+        minScaleFactor: 0.2,
+        trailActivation: 5,
+        trailDistance: 3,
+        reversalExitStreak: 3,
+        scaleThreshold: 0.5,
+        minScale: 0.05,
+        maxScale: 2.0,
     };
 
     for (let i = 0; i < args.length; i++) {
@@ -767,10 +964,16 @@ function parseArgs() {
             config.sellThreshold = parseFloat(arg.split('=')[1]);
         } else if (arg.startsWith('--maxTrades=')) {
             config.maxTrades = parseInt(arg.split('=')[1]);
+        } else if (arg.startsWith('--maxPositionPct=')) {
+            config.maxPositionPct = parseInt(arg.split('=')[1]);
         } else if (arg.startsWith('--budget=')) {
             config.budget = parseFloat(arg.split('=')[1]);
         } else if (arg.startsWith('--initialBuy=')) {
             config.initialBuy = parseFloat(arg.split('=')[1]);
+        } else if (arg.startsWith('--maxBuys=')) {
+            config.maxBuys = parseInt(arg.split('=')[1]);
+        } else if (arg.startsWith('--sellStreak=')) {
+            config.sellStreak = parseInt(arg.split('=')[1]);
         } else if (arg.startsWith('--botBuyBias=')) {
             config.botBuyBias = parseFloat(arg.split('=')[1]);
         } else if (arg.startsWith('--noiseActors=')) {
@@ -781,6 +984,30 @@ function parseArgs() {
             config.noiseSize = parseFloat(arg.split('=')[1]);
         } else if (arg.startsWith('--noiseSizeMax=')) {
             config.noiseSizeMax = parseFloat(arg.split('=')[1]);
+        } else if (arg === '--priceTaker') {
+            config.priceTaker = true;
+        } else if (arg.startsWith('--momentumWindow=')) {
+            config.momentumWindow = parseInt(arg.split('=')[1]);
+        } else if (arg.startsWith('--momentumThreshold=')) {
+            config.momentumThreshold = parseFloat(arg.split('=')[1]);
+        } else if (arg.startsWith('--maxImpactPct=')) {
+            config.maxImpactPct = parseInt(arg.split('=')[1]);
+        } else if (arg.startsWith('--curveScaleThreshold=')) {
+            config.curveScaleThreshold = parseFloat(arg.split('=')[1]);
+        } else if (arg.startsWith('--minScaleFactor=')) {
+            config.minScaleFactor = parseFloat(arg.split('=')[1]);
+        } else if (arg.startsWith('--trailActivation=')) {
+            config.trailActivation = parseFloat(arg.split('=')[1]);
+        } else if (arg.startsWith('--trailDistance=')) {
+            config.trailDistance = parseFloat(arg.split('=')[1]);
+        } else if (arg.startsWith('--reversalExitStreak=')) {
+            config.reversalExitStreak = parseInt(arg.split('=')[1]);
+        } else if (arg.startsWith('--scaleThreshold=')) {
+            config.scaleThreshold = parseFloat(arg.split('=')[1]);
+        } else if (arg.startsWith('--minScale=')) {
+            config.minScale = parseFloat(arg.split('=')[1]);
+        } else if (arg.startsWith('--maxScale=')) {
+            config.maxScale = parseFloat(arg.split('=')[1]);
         }
     }
 
@@ -805,7 +1032,10 @@ function main() {
         console.log(`Trade size: ${config.tradeSize} SOL${config.budget ? ` | Budget: ${config.budget} SOL` : ''}`);
         console.log(`Stop loss: ${config.stopLoss}% | Take profit: ${config.takeProfit}%`);
         if (config.initialBuy > 0) console.log(`Initial buy: ${config.initialBuy} SOL (at token creation)`);
+        if (config.maxBuys > 0) console.log(`Max buys: ${config.maxBuys}`);
+        if (config.sellStreak > 1) console.log(`Sell streak threshold: ${config.sellStreak} consecutive sells before buying`);
         if (config.botBuyBias !== 0.5) console.log(`Bot buy bias: ${config.botBuyBias} (${(config.botBuyBias * 100).toFixed(0)}% buy / ${((1 - config.botBuyBias) * 100).toFixed(0)}% sell)`);
+        if (config.priceTaker) console.log(`Price-taker mode: ON (player does not affect curve)`);
         if (config.seed !== null) console.log(`Seed: ${config.seed} (deterministic)`);
         console.log(`Strategies: ${config.strategies.join(', ')}`);
         if (config.noiseActors > 0) {

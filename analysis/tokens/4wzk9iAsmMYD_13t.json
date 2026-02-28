@@ -1,0 +1,167 @@
+{
+  "mint": "4wzk9iAsmMYDSYzxtMHorqTRChCSF7QhVuoXcR7mpump",
+  "extractedAt": "2026-02-15T01:33:42.858Z",
+  "totalTrades": 13,
+  "metrics": {
+    "buyCount": 3,
+    "sellCount": 10
+  },
+  "trades": [
+    {
+      "slot": 400325805,
+      "blockTime": 1771118934,
+      "mint": "4wzk9iAsmMYDSYzxtMHorqTRChCSF7QhVuoXcR7mpump",
+      "action": "buy",
+      "solAmount": "10016978",
+      "tokenAmount": "356961637605",
+      "virtualSolReserves": "36048105213",
+      "virtualTokenReserves": "1070854654362395",
+      "realSolReserves": "60101872",
+      "realTokenReserves": "790954654362395"
+    },
+    {
+      "slot": 400325809,
+      "blockTime": 1771118935,
+      "mint": "4wzk9iAsmMYDSYzxtMHorqTRChCSF7QhVuoXcR7mpump",
+      "action": "buy",
+      "solAmount": "12020374",
+      "tokenAmount": "356961414735",
+      "virtualSolReserves": "43243330416",
+      "virtualTokenReserves": "1070497692947660",
+      "realSolReserves": "72122246",
+      "realTokenReserves": "790597692947660"
+    },
+    {
+      "slot": 400325812,
+      "blockTime": 1771118937,
+      "mint": "4wzk9iAsmMYDSYzxtMHorqTRChCSF7QhVuoXcR7mpump",
+      "action": "buy",
+      "solAmount": "14424449",
+      "tokenAmount": "356961183601",
+      "virtualSolReserves": "51874721672",
+      "virtualTokenReserves": "1070140731764059",
+      "realSolReserves": "86546695",
+      "realTokenReserves": "790240731764059"
+    },
+    {
+      "slot": 400325820,
+      "blockTime": 1771118940,
+      "mint": "4wzk9iAsmMYDSYzxtMHorqTRChCSF7QhVuoXcR7mpump",
+      "action": "sell",
+      "solAmount": "17309338",
+      "tokenAmount": "357199248293",
+      "virtualSolReserves": "41513606920",
+      "virtualTokenReserves": "1070497931012352",
+      "realSolReserves": "69237357",
+      "realTokenReserves": "790597931012352"
+    },
+    {
+      "slot": 400325823,
+      "blockTime": 1771118941,
+      "mint": "4wzk9iAsmMYDSYzxtMHorqTRChCSF7QhVuoXcR7mpump",
+      "action": "sell",
+      "solAmount": "13847470",
+      "tokenAmount": "357199397106",
+      "virtualSolReserves": "33221949566",
+      "virtualTokenReserves": "1070855130409458",
+      "realSolReserves": "55389887",
+      "realTokenReserves": "790955130409458"
+    },
+    {
+      "slot": 400325827,
+      "blockTime": 1771118942,
+      "mint": "4wzk9iAsmMYDSYzxtMHorqTRChCSF7QhVuoXcR7mpump",
+      "action": "sell",
+      "solAmount": "11077976",
+      "tokenAmount": "357199553562",
+      "virtualSolReserves": "26586411050",
+      "virtualTokenReserves": "1071212329963020",
+      "realSolReserves": "44311911",
+      "realTokenReserves": "791312329963020"
+    },
+    {
+      "slot": 400325830,
+      "blockTime": 1771118944,
+      "mint": "4wzk9iAsmMYDSYzxtMHorqTRChCSF7QhVuoXcR7mpump",
+      "action": "sell",
+      "solAmount": "8862381",
+      "tokenAmount": "357199717319",
+      "virtualSolReserves": "21276210009",
+      "virtualTokenReserves": "1071569529680339",
+      "realSolReserves": "35449530",
+      "realTokenReserves": "791669529680339"
+    },
+    {
+      "slot": 400325833,
+      "blockTime": 1771118945,
+      "mint": "4wzk9iAsmMYDSYzxtMHorqTRChCSF7QhVuoXcR7mpump",
+      "action": "sell",
+      "solAmount": "7089905",
+      "tokenAmount": "357199884203",
+      "virtualSolReserves": "17026632970",
+      "virtualTokenReserves": "1071926729564542",
+      "realSolReserves": "28359625",
+      "realTokenReserves": "792026729564542"
+    },
+    {
+      "slot": 400325836,
+      "blockTime": 1771118946,
+      "mint": "4wzk9iAsmMYDSYzxtMHorqTRChCSF7QhVuoXcR7mpump",
+      "action": "sell",
+      "solAmount": "5671924",
+      "tokenAmount": "357200042906",
+      "virtualSolReserves": "13625838468",
+      "virtualTokenReserves": "1072283929607448",
+      "realSolReserves": "22687701",
+      "realTokenReserves": "792383929607448"
+    },
+    {
+      "slot": 400325841,
+      "blockTime": 1771118948,
+      "mint": "4wzk9iAsmMYDSYzxtMHorqTRChCSF7QhVuoXcR7mpump",
+      "action": "sell",
+      "solAmount": "4537539",
+      "tokenAmount": "357200185772",
+      "virtualSolReserves": "10904296690",
+      "virtualTokenReserves": "1072641129793220",
+      "realSolReserves": "18150162",
+      "realTokenReserves": "792741129793220"
+    },
+    {
+      "slot": 400325848,
+      "blockTime": 1771118951,
+      "mint": "4wzk9iAsmMYDSYzxtMHorqTRChCSF7QhVuoXcR7mpump",
+      "action": "sell",
+      "solAmount": "3630031",
+      "tokenAmount": "357200320661",
+      "virtualSolReserves": "8726338351",
+      "virtualTokenReserves": "1072998330113881",
+      "realSolReserves": "14520131",
+      "realTokenReserves": "793098330113881"
+    },
+    {
+      "slot": 400325852,
+      "blockTime": 1771118952,
+      "mint": "4wzk9iAsmMYDSYzxtMHorqTRChCSF7QhVuoXcR7mpump",
+      "action": "sell",
+      "solAmount": "2904025",
+      "tokenAmount": "357200493809",
+      "virtualSolReserves": "6983391529",
+      "virtualTokenReserves": "1073355530607690",
+      "realSolReserves": "11616106",
+      "realTokenReserves": "793455530607690"
+    },
+    {
+      "slot": 400325856,
+      "blockTime": 1771118954,
+      "mint": "4wzk9iAsmMYDSYzxtMHorqTRChCSF7QhVuoXcR7mpump",
+      "action": "sell",
+      "solAmount": "2323220",
+      "tokenAmount": "357200645969",
+      "virtualSolReserves": "6981068309",
+      "virtualTokenReserves": "1073712731253659",
+      "realSolReserves": "9292886",
+      "realTokenReserves": "793812731253659"
+    }
+  ]
+}

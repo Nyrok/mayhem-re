@@ -1,0 +1,1 @@
+{"mint":"EyN7EXoMWHwx18pkTWJeQgKXEW3uMrmHf2zyEgWepump","pnlPct":-18.56,"pnlSol":-0.185557,"tradeCount":1,"exitReason":"END","botBuys":14,"botSells":24,"durationSec":65,"config":{"strategy":"flipScalper","budget":1,"tradeSize":0.2,"takeProfit":100,"stopLoss":100,"maxBuys":0,"sellStreak":1,"maxPositionPct":100},"timestamp":"2026-02-15T23:40:53.029Z"}

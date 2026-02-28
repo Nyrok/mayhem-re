@@ -64,6 +64,7 @@ function parseArgs() {
         minScale: 0.05,
         maxScale: 2.0,
         mcapFloor: 0, // market cap floor in SOL — sell & stop if mcap drops below
+        flipEntryMcap: 30, // mcap threshold for flipScalper entry
         approach: 'A',
         entryRatio: 1.2,
         scoreThreshold: 2.0,
@@ -96,6 +97,7 @@ function parseArgs() {
         else if (arg.startsWith('--minScale=')) config.minScale = parseFloat(arg.split('=')[1]);
         else if (arg.startsWith('--maxScale=')) config.maxScale = parseFloat(arg.split('=')[1]);
         else if (arg.startsWith('--mcapFloor=')) config.mcapFloor = parseFloat(arg.split('=')[1]);
+        else if (arg.startsWith('--flipEntryMcap=')) config.flipEntryMcap = parseFloat(arg.split('=')[1]);
         else if (arg.startsWith('--approach=')) config.approach = arg.split('=')[1];
         else if (arg.startsWith('--entryRatio=')) config.entryRatio = parseFloat(arg.split('=')[1]);
         else if (arg.startsWith('--scoreThreshold=')) config.scoreThreshold = parseFloat(arg.split('=')[1]);
@@ -277,6 +279,11 @@ function streamAndSimulate(mintAddress, config, log, walletBalance) {
         let lastTradeReserves = null; // Track last trade reserves for force sell
         let mcEntered = false;
         let mcWatchStart = null;
+        let flipBuyNext = true;       // flipScalper: true=next sell buys, false=next sell sells
+        let roundTripEntrySOL = 0n;    // flipScalper: SOL spent on current buy
+        let initialBuyDone = false;    // flipScalper: initial buy before flipping
+        let initialTokens = 0n;        // flipScalper: tokens from initial buy (held throughout)
+        let flipSkipBuy = false;       // flipScalper: skip buy on same trade as FLIP STOP
 
         // Set of already-processed signatures to avoid duplicates
         const processed = new Set();
@@ -389,6 +396,7 @@ function streamAndSimulate(mintAddress, config, log, walletBalance) {
                     botTradeCount++;
                     if (trade.action === 'buy') botBuys++;
                     else botSells++;
+                    flipSkipBuy = false; // reset per-trade flag
 
                     if (!startTime) startTime = trade.blockTime;
                     lastTradeTime = trade.blockTime;
@@ -433,6 +441,27 @@ function streamAndSimulate(mintAddress, config, log, walletBalance) {
                             if (log) console.log(`  >>> KILL SWITCH: excess=${excess} >= ${config.killSwitch} | ${botBuys}B/${botSells}S`);
                             finishSession();
                             return;
+                        }
+                    }
+
+                    // flipScalper: stop if flip portion P&L < 0
+                    if (config.strategy === 'flipScalper' && tokenBalance > initialTokens && roundTripEntrySOL > 0n) {
+                        const flipTokens = tokenBalance - initialTokens;
+                        const flipValue = curve.getSolForTokens(flipTokens);
+                        if (flipValue < roundTripEntrySOL) {
+                            // Sell only flip portion, keep initial
+                            const entryForLog = roundTripEntrySOL;
+                            const vSolBefore = curve.virtualSolReserves;
+                            const vTokenBefore = curve.virtualTokenReserves;
+                            solBalance += curve.executeSell(flipTokens);
+                            playerSolDelta += curve.virtualSolReserves - vSolBefore;
+                            playerTokenDelta += vTokenBefore - curve.virtualTokenReserves;
+                            tokenBalance = initialTokens;
+                            playerTradeCount++;
+                            flipBuyNext = true;
+                            roundTripEntrySOL = 0n;
+                            flipSkipBuy = true; // prevent re-buy on same trade
+                            if (log) console.log(`  >>> FLIP STOP: flip worth ${(Number(flipValue)/1e9).toFixed(4)} < entry ${(Number(entryForLog)/1e9).toFixed(4)} SOL (keeping initial)`);
                         }
                     }
 
@@ -572,8 +601,62 @@ function streamAndSimulate(mintAddress, config, log, walletBalance) {
                         }
                     }
 
+                    // flipScalper: initial buy then alternate buy/sell on bot sells (only above mcap gate)
+                    if (config.strategy === 'flipScalper' && trade.action === 'sell' && !flipSkipBuy) {
+                        const flipMcap = Number(1_000_000_000_000_000n * curve.virtualSolReserves / curve.virtualTokenReserves) / 1e9;
+                        if (!initialBuyDone && flipMcap >= config.flipEntryMcap && solBalance >= tradeSizeLamports) {
+                            // INITIAL BUY
+                            let buyAmount = tradeSizeLamports;
+                            if (buyAmount > solBalance) buyAmount = solBalance;
+                            if (buyAmount > 0n) {
+                                const vSolBefore = curve.virtualSolReserves;
+                                const vTokenBefore = curve.virtualTokenReserves;
+                                const tokensReceived = curve.executeBuy(buyAmount);
+                                playerSolDelta += curve.virtualSolReserves - vSolBefore;
+                                playerTokenDelta += vTokenBefore - curve.virtualTokenReserves;
+                                tokenBalance += tokensReceived;
+                                solBalance -= buyAmount;
+                                playerTradeCount++;
+                                initialBuyDone = true;
+                                initialTokens = tokensReceived;
+                                flipBuyNext = true; // next sell will be a flip buy
+                                if (log) console.log(`  >>> INITIAL BUY: ${(Number(buyAmount) / 1e9).toFixed(3)} SOL (mcap=${flipMcap.toFixed(1)})`);
+                            }
+                        } else if (initialBuyDone && flipBuyNext && flipMcap >= config.flipEntryMcap && solBalance >= tradeSizeLamports) {
+                            // FLIP BUY
+                            let buyAmount = tradeSizeLamports;
+                            if (buyAmount > solBalance) buyAmount = solBalance;
+                            if (buyAmount > 0n) {
+                                const vSolBefore = curve.virtualSolReserves;
+                                const vTokenBefore = curve.virtualTokenReserves;
+                                const tokensReceived = curve.executeBuy(buyAmount);
+                                playerSolDelta += curve.virtualSolReserves - vSolBefore;
+                                playerTokenDelta += vTokenBefore - curve.virtualTokenReserves;
+                                tokenBalance += tokensReceived;
+                                solBalance -= buyAmount;
+                                playerTradeCount++;
+                                roundTripEntrySOL = buyAmount;
+                                flipBuyNext = false;
+                                if (log) console.log(`  >>> FLIP BUY: ${(Number(buyAmount) / 1e9).toFixed(3)} SOL (mcap=${flipMcap.toFixed(1)})`);
+                            }
+                        } else if (initialBuyDone && !flipBuyNext && tokenBalance > initialTokens) {
+                            // FLIP SELL (only the flip portion)
+                            const flipTokens = tokenBalance - initialTokens;
+                            const vSolBefore = curve.virtualSolReserves;
+                            const vTokenBefore = curve.virtualTokenReserves;
+                            solBalance += curve.executeSell(flipTokens);
+                            playerSolDelta += curve.virtualSolReserves - vSolBefore;
+                            playerTokenDelta += vTokenBefore - curve.virtualTokenReserves;
+                            tokenBalance = initialTokens;
+                            playerTradeCount++;
+                            flipBuyNext = true;
+                            roundTripEntrySOL = 0n;
+                            if (log) console.log(`  >>> FLIP SELL (keeping initial)`);
+                        }
+                    }
+
                     // Buy when bot sells (with sellStreak + maxPositionPct)
-                    if (config.strategy !== 'momentumConfirmed'
+                    if (config.strategy !== 'momentumConfirmed' && config.strategy !== 'flipScalper'
                         && trade.action === 'sell' && consecutiveSells >= config.sellStreak
                         && solBalance >= tradeSizeLamports
                         && (config.maxBuys === 0 || playerTradeCount < config.maxBuys)) {
@@ -674,8 +757,8 @@ function streamAndSimulate(mintAddress, config, log, walletBalance) {
                         }
                     }
 
-                    // Check TP/SL
-                    if (pnlPct >= config.takeProfit) {
+                    // Check TP/SL (skip for flipScalper — only FLIP exits)
+                    if (config.strategy !== 'flipScalper' && pnlPct >= config.takeProfit) {
                         exitReason = 'TP';
                         if (tokenBalance > 0n) {
                             solBalance += curve.executeSell(tokenBalance);
@@ -686,7 +769,7 @@ function streamAndSimulate(mintAddress, config, log, walletBalance) {
                         finishSession();
                         return;
                     }
-                    if (pnlPct <= -config.stopLoss) {
+                    if (config.strategy !== 'flipScalper' && pnlPct <= -config.stopLoss) {
                         exitReason = 'SL';
                         if (tokenBalance > 0n) {
                             solBalance += curve.executeSell(tokenBalance);
@@ -707,6 +790,257 @@ function streamAndSimulate(mintAddress, config, log, walletBalance) {
         // Start the quiet timer
         resetTimer();
     });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Live streaming (flipScalper v2): trades pushed externally, persistent sub
+// ═══════════════════════════════════════════════════════════════════════════
+
+function streamAndSimulateFlipScalper(mintAddress, config, log, walletBalance) {
+    let resolvePromise;
+    const promise = new Promise(resolve => { resolvePromise = resolve; });
+
+    const INACTIVITY_MS = 10_000;
+    const initialBudget = walletBalance ?? BigInt(Math.floor(config.budget * 1e9));
+    const tradeSizeLamports = BigInt(Math.floor(config.tradeSize * 1e9));
+
+    let solBalance = initialBudget;
+    let tokenBalance = 0n;
+    let playerTradeCount = 0;
+    let botTradeCount = 0;
+    let botBuys = 0;
+    let botSells = 0;
+    let exitReason = 'END';
+    let startTime = null;
+    let lastTradeTime = null;
+    let exited = false;
+    let playerSolDelta = 0n;
+    let playerTokenDelta = 0n;
+    let timer = null;
+    let lastTradeReserves = null;
+    let flipBuyNext = true;
+    let roundTripEntrySOL = 0n;
+    let initialTokens = 0n;
+    let flipSkipBuy = false;
+    let mcapPeaked = false; // high-water mark: only exit mcap<30 after mcap was above 30
+    let holdEntryDone = false;
+    let lastBotBuyMcap = null;
+
+    const processed = new Set();
+
+    // No initial buy — wait for mcap >= flipEntryMcap then FLIP BUY on first bot sell
+    flipBuyNext = true;
+
+    function finishSession() {
+        if (exited) return;
+        exited = true;
+        if (timer) clearTimeout(timer);
+
+        // Force sell remaining tokens at last known curve state
+        if (tokenBalance > 0n && lastTradeReserves) {
+            const curve = new BondingCurve();
+            curve.virtualSolReserves = lastTradeReserves.virtualSolReserves + playerSolDelta;
+            curve.virtualTokenReserves = lastTradeReserves.virtualTokenReserves - playerTokenDelta;
+            curve.realSolReserves = lastTradeReserves.realSolReserves + playerSolDelta;
+            curve.realTokenReserves = lastTradeReserves.realTokenReserves - playerTokenDelta;
+            solBalance += curve.executeSell(tokenBalance);
+            tokenBalance = 0n;
+            if (log) console.log(`  Force-sold remaining tokens at END`);
+        }
+
+        const pnlPct = Number(solBalance - initialBudget) / Number(initialBudget) * 100;
+        const durationSec = (startTime && lastTradeTime) ? lastTradeTime - startTime : 0;
+
+        resolvePromise({
+            mint: mintAddress,
+            pnlPct,
+            pnlSol: Number(solBalance - initialBudget) / 1e9,
+            tradeCount: playerTradeCount,
+            totalInvested: playerTradeCount * config.tradeSize,
+            botBuys,
+            botSells,
+            exitReason,
+            durationSec,
+            finalBalance: solBalance,
+        });
+    }
+
+    function resetTimer() {
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(() => {
+            if (exited) return;
+            if (log) console.log(`  (10s inactivity — ending session)`);
+            finishSession();
+        }, INACTIVITY_MS);
+    }
+
+    if (log) console.log(`  Streaming trades for ${mintAddress} (${config.strategy})...`);
+
+    function pushTrade(trade) {
+        if (exited) return;
+        const dedupKey = trade.slot + trade.action;
+        if (processed.has(dedupKey)) return;
+        processed.add(dedupKey);
+
+        if (trade.mint !== mintAddress) return;
+
+        resetTimer();
+
+        botTradeCount++;
+        if (trade.action === 'buy') botBuys++;
+        else botSells++;
+        flipSkipBuy = false;
+
+        if (!startTime) startTime = trade.blockTime;
+        lastTradeTime = trade.blockTime;
+        lastTradeReserves = {
+            virtualSolReserves: BigInt(trade.virtualSolReserves),
+            virtualTokenReserves: BigInt(trade.virtualTokenReserves),
+            realSolReserves: BigInt(trade.realSolReserves),
+            realTokenReserves: BigInt(trade.realTokenReserves),
+        };
+
+        // Reconstruct curve from post-trade reserves + player delta overlay
+        const curve = new BondingCurve();
+        curve.virtualSolReserves = BigInt(trade.virtualSolReserves) + playerSolDelta;
+        curve.virtualTokenReserves = BigInt(trade.virtualTokenReserves) - playerTokenDelta;
+        curve.realSolReserves = BigInt(trade.realSolReserves) + playerSolDelta;
+        curve.realTokenReserves = BigInt(trade.realTokenReserves) - playerTokenDelta;
+
+        // mcap tracking + exit
+        const mcap = Number(1_000_000_000_000_000n * curve.virtualSolReserves / curve.virtualTokenReserves) / 1e9;
+        const entryMcap = config.flipEntryMcap || 30;
+        if (mcap >= entryMcap) mcapPeaked = true;
+        if (mcapPeaked && mcap < entryMcap) {
+            if (tokenBalance > 0n) { solBalance += curve.executeSell(tokenBalance); tokenBalance = 0n; }
+            exitReason = 'MCAP30';
+            if (log) console.log(`  >>> MCAP < ${entryMcap} EXIT: mcap=${mcap.toFixed(1)} SOL (peaked above ${entryMcap} earlier)`);
+            finishSession();
+            return;
+        }
+        if (log && config.verbose) {
+            console.log(`       mcap=${mcap.toFixed(1)} peaked=${mcapPeaked}`);
+        }
+
+        // holdReversal strategy
+        if (config.strategy === 'holdReversal') {
+            // Track last bot buy mcap
+            if (trade.action === 'buy') lastBotBuyMcap = mcap;
+
+            // Reversal exit: mcap dropped below last bot buy level
+            if (holdEntryDone && lastBotBuyMcap !== null && mcap < lastBotBuyMcap) {
+                if (tokenBalance > 0n) {
+                    const vSolBefore = curve.virtualSolReserves;
+                    const vTokenBefore = curve.virtualTokenReserves;
+                    solBalance += curve.executeSell(tokenBalance);
+                    playerSolDelta += curve.virtualSolReserves - vSolBefore;
+                    playerTokenDelta += vTokenBefore - curve.virtualTokenReserves;
+                    tokenBalance = 0n;
+                    playerTradeCount++;
+                }
+                exitReason = 'REVERSAL';
+                if (log) console.log(`  >>> REVERSAL EXIT: mcap=${mcap.toFixed(1)} < lastBotBuy=${lastBotBuyMcap.toFixed(1)}`);
+                finishSession();
+                return;
+            }
+
+            // Entry: any bot action when mcap >= entry gate
+            if (!holdEntryDone && mcap >= config.flipEntryMcap && solBalance >= tradeSizeLamports) {
+                let buyAmount = tradeSizeLamports;
+                if (buyAmount > solBalance) buyAmount = solBalance;
+                if (buyAmount > 0n) {
+                    const vSolBefore = curve.virtualSolReserves;
+                    const vTokenBefore = curve.virtualTokenReserves;
+                    const tokensGot = curve.executeBuy(buyAmount);
+                    playerSolDelta += curve.virtualSolReserves - vSolBefore;
+                    playerTokenDelta += vTokenBefore - curve.virtualTokenReserves;
+                    tokenBalance += tokensGot;
+                    solBalance -= buyAmount;
+                    playerTradeCount++;
+                    holdEntryDone = true;
+                    if (log) console.log(`  >>> HOLD ENTRY: ${(Number(buyAmount) / 1e9).toFixed(3)} SOL at mcap=${mcap.toFixed(1)}`);
+                }
+            }
+        }
+
+        // flipScalper: stop if flip P&L < 0 — sell ALL tokens
+        if (config.strategy === 'flipScalper' && tokenBalance > 0n && roundTripEntrySOL > 0n) {
+            const flipValue = curve.getSolForTokens(tokenBalance);
+            if (flipValue < roundTripEntrySOL) {
+                const entryForLog = roundTripEntrySOL;
+                const vSolBefore = curve.virtualSolReserves;
+                const vTokenBefore = curve.virtualTokenReserves;
+                solBalance += curve.executeSell(tokenBalance);
+                playerSolDelta += curve.virtualSolReserves - vSolBefore;
+                playerTokenDelta += vTokenBefore - curve.virtualTokenReserves;
+                tokenBalance = 0n;
+                playerTradeCount++;
+                flipBuyNext = true;
+                roundTripEntrySOL = 0n;
+                flipSkipBuy = true;
+                if (log) console.log(`  >>> FLIP STOP: worth ${(Number(flipValue)/1e9).toFixed(4)} < entry ${(Number(entryForLog)/1e9).toFixed(4)} SOL — sold all`);
+            }
+        }
+
+        // flipScalper: FLIP BUY / FLIP SELL on bot sells
+        if (config.strategy === 'flipScalper' && trade.action === 'sell' && !flipSkipBuy) {
+            if (flipBuyNext && mcap >= config.flipEntryMcap && solBalance >= tradeSizeLamports) {
+                // FLIP BUY (only above mcap 30)
+                let buyAmount = tradeSizeLamports;
+                if (buyAmount > solBalance) buyAmount = solBalance;
+                if (buyAmount > 0n) {
+                    const vSolBefore = curve.virtualSolReserves;
+                    const vTokenBefore = curve.virtualTokenReserves;
+                    const tokensGot = curve.executeBuy(buyAmount);
+                    playerSolDelta += curve.virtualSolReserves - vSolBefore;
+                    playerTokenDelta += vTokenBefore - curve.virtualTokenReserves;
+                    tokenBalance += tokensGot;
+                    solBalance -= buyAmount;
+                    playerTradeCount++;
+                    roundTripEntrySOL = buyAmount;
+                    flipBuyNext = false;
+                    if (log) console.log(`  >>> FLIP BUY: ${(Number(buyAmount) / 1e9).toFixed(3)} SOL (mcap=${mcap.toFixed(1)})`);
+                }
+            } else if (!flipBuyNext && tokenBalance > 0n) {
+                // FLIP SELL — sell ALL tokens
+                const vSolBefore = curve.virtualSolReserves;
+                const vTokenBefore = curve.virtualTokenReserves;
+                solBalance += curve.executeSell(tokenBalance);
+                playerSolDelta += curve.virtualSolReserves - vSolBefore;
+                playerTokenDelta += vTokenBefore - curve.virtualTokenReserves;
+                tokenBalance = 0n;
+                playerTradeCount++;
+                flipBuyNext = true;
+                roundTripEntrySOL = 0n;
+                if (log) console.log(`  >>> FLIP SELL — sold all`);
+            }
+        }
+
+        // Valorize position
+        const tokenValue = tokenBalance > 0n ? curve.getSolForTokens(tokenBalance) : 0n;
+
+        if (log) {
+            const action = trade.action.toUpperCase().padEnd(4);
+            const solStr = (Number(trade.solAmount) / 1e9).toFixed(4);
+            let pnlDisplay;
+            if (config.strategy === 'holdReversal' && tokenBalance > 0n) {
+                const portfolio = solBalance + tokenValue;
+                const pnlPct = Number(portfolio - initialBudget) / Number(initialBudget) * 100;
+                pnlDisplay = `P&L: ${formatSign(pnlPct)}%`;
+            } else if (tokenBalance > 0n && roundTripEntrySOL > 0n) {
+                const pnlPct = Number(tokenValue - roundTripEntrySOL) / Number(roundTripEntrySOL) * 100;
+                pnlDisplay = `P&L: ${formatSign(pnlPct)}%`;
+            } else {
+                pnlDisplay = 'NO POSITION';
+            }
+            console.log(`  [${botTradeCount}] Bot ${action} ${solStr} SOL | Player: ${playerTradeCount}t, ${pnlDisplay} | ${botBuys}B/${botSells}S`);
+        }
+    }
+
+    // Start the quiet timer
+    resetTimer();
+
+    return { promise, pushTrade };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -774,14 +1108,41 @@ function replayToken(botTrades, config) {
     let runBotSells = 0;
     let mcEntered = false;
     let mcWatchStart = null;
+    let flipBuyNext = true;
+    let roundTripEntrySOL = 0n;
+    let initialTokens = 0n;
+    let flipSkipBuy = false;
+    let mcapPeaked = false;
+    let holdEntryDone = false;
+    let lastBotBuyMcap = null;
+
+    // flipScalper: no initial buy — wait for mcap >= 30 then FLIP BUY on first bot sell
+    if (config.strategy === 'flipScalper') {
+        flipBuyNext = true;
+    }
 
     for (let i = 0; i < botTrades.length; i++) {
         const trade = botTrades[i];
+        flipSkipBuy = false; // reset per-trade flag
         const curve = new BondingCurve();
         curve.virtualSolReserves = BigInt(trade.virtualSolReserves) + playerSolDelta;
         curve.virtualTokenReserves = BigInt(trade.virtualTokenReserves) - playerTokenDelta;
         curve.realSolReserves = BigInt(trade.realSolReserves) + playerSolDelta;
         curve.realTokenReserves = BigInt(trade.realTokenReserves) - playerTokenDelta;
+
+        // flipScalper/holdReversal: mcap tracking + exit (only after peaked above entry mcap)
+        if (config.strategy === 'flipScalper' || config.strategy === 'holdReversal') {
+            const mcap = Number(1_000_000_000_000_000n * curve.virtualSolReserves / curve.virtualTokenReserves) / 1e9;
+            if (mcap >= config.flipEntryMcap) mcapPeaked = true;
+            if (mcapPeaked && mcap < config.flipEntryMcap) {
+                exitReason = 'MCAP30'; exitTradeIndex = i;
+                if (tokenBalance > 0n) {
+                    solBalance += curve.executeSell(tokenBalance);
+                    tokenBalance = 0n;
+                }
+                break;
+            }
+        }
 
         // Market cap floor: sell & exit if mcap drops below threshold
         if (config.mcapFloor > 0) {
@@ -804,6 +1165,63 @@ function replayToken(botTrades, config) {
                 solBalance += curve.executeSell(tokenBalance);
                 tokenBalance = 0n;
                 break;
+            }
+        }
+
+        // flipScalper: stop if flip P&L < 0 — sell ALL tokens
+        if (config.strategy === 'flipScalper' && tokenBalance > 0n && roundTripEntrySOL > 0n) {
+            const flipValue = curve.getSolForTokens(tokenBalance);
+            if (flipValue < roundTripEntrySOL) {
+                const vSolBefore = curve.virtualSolReserves;
+                const vTokenBefore = curve.virtualTokenReserves;
+                solBalance += curve.executeSell(tokenBalance);
+                playerSolDelta += curve.virtualSolReserves - vSolBefore;
+                playerTokenDelta += vTokenBefore - curve.virtualTokenReserves;
+                tokenBalance = 0n;
+                tradeCount++;
+                flipBuyNext = true;
+                roundTripEntrySOL = 0n;
+                flipSkipBuy = true;
+            }
+        }
+
+        // holdReversal: track + enter + exit
+        if (config.strategy === 'holdReversal') {
+            const mcap = Number(1_000_000_000_000_000n * curve.virtualSolReserves / curve.virtualTokenReserves) / 1e9;
+            if (trade.action === 'buy') lastBotBuyMcap = mcap;
+
+            // Reversal exit
+            if (holdEntryDone && lastBotBuyMcap !== null && mcap < lastBotBuyMcap) {
+                exitReason = 'REVERSAL'; exitTradeIndex = i;
+                if (tokenBalance > 0n) {
+                    const vSolBefore = curve.virtualSolReserves;
+                    const vTokenBefore = curve.virtualTokenReserves;
+                    solBalance += curve.executeSell(tokenBalance);
+                    playerSolDelta += curve.virtualSolReserves - vSolBefore;
+                    playerTokenDelta += vTokenBefore - curve.virtualTokenReserves;
+                    tokenBalance = 0n;
+                    tradeCount++;
+                }
+                if (config.verbose) console.log(`  >>> REVERSAL EXIT: mcap=${mcap.toFixed(1)} < lastBotBuy=${lastBotBuyMcap.toFixed(1)}`);
+                break;
+            }
+
+            // Entry: any bot action when mcap >= entry gate
+            if (!holdEntryDone && mcap >= config.flipEntryMcap && solBalance >= tradeSizeLamports) {
+                let buyAmount = tradeSizeLamports;
+                if (buyAmount > solBalance) buyAmount = solBalance;
+                if (buyAmount > 0n) {
+                    const vSolBefore = curve.virtualSolReserves;
+                    const vTokenBefore = curve.virtualTokenReserves;
+                    const tokensReceived = curve.executeBuy(buyAmount);
+                    playerSolDelta += curve.virtualSolReserves - vSolBefore;
+                    playerTokenDelta += vTokenBefore - curve.virtualTokenReserves;
+                    tokenBalance += tokensReceived;
+                    solBalance -= buyAmount;
+                    tradeCount++;
+                    holdEntryDone = true;
+                    if (config.verbose) console.log(`  >>> HOLD ENTRY: ${(Number(buyAmount) / 1e9).toFixed(3)} SOL at mcap=${mcap.toFixed(1)}`);
+                }
             }
         }
 
@@ -943,8 +1361,46 @@ function replayToken(botTrades, config) {
             }
         }
 
+        // flipScalper v2: FLIP BUY / FLIP SELL on bot sells (initial buy done pre-loop)
+        if (config.strategy === 'flipScalper' && trade.action === 'sell' && !flipSkipBuy) {
+            const flipMcap = Number(1_000_000_000_000_000n * curve.virtualSolReserves / curve.virtualTokenReserves) / 1e9;
+            if (flipBuyNext && flipMcap >= config.flipEntryMcap && solBalance >= tradeSizeLamports) {
+                // FLIP BUY (only above mcap 30)
+                let buyAmount = tradeSizeLamports;
+                if (buyAmount > solBalance) buyAmount = solBalance;
+                if (buyAmount > 0n) {
+                    const vSolBefore = curve.virtualSolReserves;
+                    const vTokenBefore = curve.virtualTokenReserves;
+                    const tokensReceived = curve.executeBuy(buyAmount);
+                    playerSolDelta += curve.virtualSolReserves - vSolBefore;
+                    playerTokenDelta += vTokenBefore - curve.virtualTokenReserves;
+                    tokenBalance += tokensReceived;
+                    solBalance -= buyAmount;
+                    tradeCount++;
+                    roundTripEntrySOL = buyAmount;
+                    flipBuyNext = false;
+                    if (config.verbose) {
+                        const flipMcap = Number(1_000_000_000_000_000n * curve.virtualSolReserves / curve.virtualTokenReserves) / 1e9;
+                        console.log(`  >>> FLIP BUY: ${(Number(buyAmount) / 1e9).toFixed(3)} SOL (mcap=${flipMcap.toFixed(1)})`);
+                    }
+                }
+            } else if (!flipBuyNext && tokenBalance > 0n) {
+                // FLIP SELL — sell ALL tokens
+                const vSolBefore = curve.virtualSolReserves;
+                const vTokenBefore = curve.virtualTokenReserves;
+                solBalance += curve.executeSell(tokenBalance);
+                playerSolDelta += curve.virtualSolReserves - vSolBefore;
+                playerTokenDelta += vTokenBefore - curve.virtualTokenReserves;
+                tokenBalance = 0n;
+                tradeCount++;
+                flipBuyNext = true;
+                roundTripEntrySOL = 0n;
+                if (config.verbose) console.log(`  >>> FLIP SELL — sold all`);
+            }
+        }
+
         // Buy when bot sells (with sellStreak + maxPositionPct)
-        if (config.strategy !== 'momentumConfirmed'
+        if (config.strategy !== 'momentumConfirmed' && config.strategy !== 'flipScalper' && config.strategy !== 'holdReversal'
             && trade.action === 'sell' && consecutiveSells >= config.sellStreak
             && solBalance >= tradeSizeLamports
             && (config.maxBuys === 0 || tradeCount < config.maxBuys)) {
@@ -1019,9 +1475,19 @@ function replayToken(botTrades, config) {
         // Verbose logging for replay mode
         if (config.verbose) {
             const action = trade.action.toUpperCase().padEnd(4);
-            const pnlStr = formatSign(pnlPct);
             const solStr = (Number(trade.solAmount) / 1e9).toFixed(4);
-            console.log(`  [${i + 1}] Bot ${action} ${solStr} SOL | Player: ${tradeCount} buys, P&L: ${pnlStr}% | ${runBotBuys}B/${runBotSells}S`);
+            let pnlDisplay;
+            if (config.strategy === 'holdReversal' && tokenBalance > 0n) {
+                pnlDisplay = `P&L: ${formatSign(pnlPct)}%`;
+            } else if (config.strategy === 'flipScalper' && tokenBalance > 0n && roundTripEntrySOL > 0n) {
+                const posPnl = Number(tokenValue - roundTripEntrySOL) / Number(roundTripEntrySOL) * 100;
+                pnlDisplay = `P&L: ${formatSign(posPnl)}%`;
+            } else if (config.strategy === 'flipScalper' || config.strategy === 'holdReversal') {
+                pnlDisplay = 'NO POSITION';
+            } else {
+                pnlDisplay = `P&L: ${formatSign(pnlPct)}%`;
+            }
+            console.log(`  [${i + 1}] Bot ${action} ${solStr} SOL | Player: ${tradeCount} buys, ${pnlDisplay} | ${runBotBuys}B/${runBotSells}S`);
 
             if (config.strategy === 'smartDipAccumulator') {
                 if (trade.action === 'sell') {
@@ -1048,7 +1514,7 @@ function replayToken(botTrades, config) {
             }
         }
 
-        if (pnlPct >= config.takeProfit) {
+        if (config.strategy !== 'flipScalper' && config.strategy !== 'holdReversal' && pnlPct >= config.takeProfit) {
             exitReason = 'TP'; exitTradeIndex = i;
             if (tokenBalance > 0n) {
                 solBalance += curve.executeSell(tokenBalance);
@@ -1056,7 +1522,7 @@ function replayToken(botTrades, config) {
             }
             break;
         }
-        if (pnlPct <= -config.stopLoss) {
+        if (config.strategy !== 'flipScalper' && config.strategy !== 'holdReversal' && pnlPct <= -config.stopLoss) {
             exitReason = 'SL'; exitTradeIndex = i;
             if (tokenBalance > 0n) {
                 solBalance += curve.executeSell(tokenBalance);
@@ -1145,15 +1611,19 @@ function printSummary(results, config) {
     }
 
     const wins = results.filter(r => r.pnlPct > 0).length;
+    const losses = results.filter(r => r.pnlPct < 0).length;
+    const neutral = results.filter(r => r.pnlPct === 0).length;
+    const decided = wins + losses;
     const pnlValues = results.map(r => r.pnlPct).sort((a, b) => a - b);
     const meanPnl = results.reduce((s, r) => s + r.pnlPct, 0) / results.length;
     const medianPnl = pnlValues[Math.floor(pnlValues.length / 2)];
     const totalPnlSol = results.reduce((s, r) => s + r.pnlSol, 0);
+    const wrStr = decided > 0 ? `${(wins / decided * 100).toFixed(1)}% (${wins}/${decided})` : 'n/a';
 
     console.log(`${'═'.repeat(110)}`);
-    console.log(`Total: ${results.length} | Win Rate: ${(wins / results.length * 100).toFixed(1)}% (${wins}/${results.length}) | Mean: ${formatSign(meanPnl)}% | Median: ${formatSign(medianPnl)}%`);
+    console.log(`Total: ${results.length} (${wins}W/${losses}L/${neutral}N) | Win Rate: ${wrStr} | Mean: ${formatSign(meanPnl)}% | Median: ${formatSign(medianPnl)}%`);
     console.log(`Total P&L: ${formatSign(totalPnlSol, 4)} SOL | Best: ${formatSign(pnlValues[pnlValues.length - 1])}% | Worst: ${formatSign(pnlValues[0])}%`);
-    console.log(`Exits: TP=${results.filter(r => r.exitReason === 'TP').length} SL=${results.filter(r => r.exitReason === 'SL').length} MCAP=${results.filter(r => r.exitReason === 'MCAP').length} TRAIL=${results.filter(r => r.exitReason === 'TRAIL').length} REV=${results.filter(r => r.exitReason === 'REV').length} KILL=${results.filter(r => r.exitReason === 'KILL').length} END=${results.filter(r => r.exitReason === 'END').length}`);
+    console.log(`Exits: TP=${results.filter(r => r.exitReason === 'TP').length} SL=${results.filter(r => r.exitReason === 'SL').length} FLIP=${results.filter(r => r.exitReason === 'FLIP').length} MCAP=${results.filter(r => r.exitReason === 'MCAP').length} MCAP30=${results.filter(r => r.exitReason === 'MCAP30').length} TRAIL=${results.filter(r => r.exitReason === 'TRAIL').length} REV=${results.filter(r => r.exitReason === 'REV').length} REVERSAL=${results.filter(r => r.exitReason === 'REVERSAL').length} KILL=${results.filter(r => r.exitReason === 'KILL').length} END=${results.filter(r => r.exitReason === 'END').length}`);
     const totalInvested = results.length * config.budget;
     console.log(`ROI on capital: ${formatSign(totalPnlSol / totalInvested * 100)}% (${totalInvested.toFixed(1)} SOL deployed across ${results.length} tokens)`);
     console.log(`${'═'.repeat(110)}`);
@@ -1275,47 +1745,138 @@ async function main() {
             process.exit(0);
         });
 
-        while (true) {
-            // In wallet mode, check if we can still afford a trade
-            if (runningWallet) {
-                if (wallet < tradeSizeLamports) {
-                    if (log) console.log(`\n  Wallet depleted (${(Number(wallet) / 1e9).toFixed(4)} SOL < ${config.tradeSize} SOL trade size). Stopping.`);
+        if (config.strategy === 'flipScalper' || config.strategy === 'holdReversal') {
+            // ── flipScalper/holdReversal: ONE persistent subscription across all tokens ──
+            let currentMint = null;
+            let currentPushTrade = null;
+            let sessionResolve = null;
+            let pendingTrades = [];  // buffer ALL trades before session is ready
+            const endedMints = new Set();
+
+            const logsId = connection.onLogs(
+                new PublicKey(MAYHEM_TRADING_WALLET),
+                async (logs) => {
+                    if (logs.err) return;
+                    const tx = await fetchTxWithRetry(logs.signature);
+                    if (!tx) return;
+                    const trade = decodeBotTrade(tx);
+                    if (!trade || endedMints.has(trade.mint)) return;
+
+                    if (trade.mint !== currentMint) {
+                        currentMint = trade.mint;
+                        pendingTrades = [trade];  // start buffering for new mint
+                        if (sessionResolve) sessionResolve(trade.mint);
+                    } else if (currentPushTrade) {
+                        currentPushTrade(trade);
+                    } else {
+                        // Session not ready yet — buffer the trade
+                        pendingTrades.push(trade);
+                    }
+                },
+                'processed'
+            );
+
+            function waitForNewMintFromSub() {
+                return new Promise(resolve => {
+                    if (log) console.log(`\nListening for new Mayhem token (persistent sub)...`);
+                    sessionResolve = resolve;
+                });
+            }
+
+            while (true) {
+                if (runningWallet && wallet < tradeSizeLamports) {
+                    if (log) console.log(`\n  Wallet depleted. Stopping.`);
                     break;
                 }
-                // Per-token budget is capped at config.budget or remaining wallet, whichever is smaller
-                const tokenBudget = wallet < perTokenBudget ? wallet : perTokenBudget;
 
-                const mintAddress = await waitForNewMint(log);
-                const result = await streamAndSimulate(mintAddress, config, log, tokenBudget);
-                // Update wallet: subtract what was allocated, add back what was returned
-                wallet = wallet - tokenBudget + result.finalBalance;
+                const mintAddress = await waitForNewMintFromSub();
+                if (log) console.log(`  New Mayhem token: ${mintAddress}`);
+
+                const tokenBudget = runningWallet
+                    ? (wallet < perTokenBudget ? wallet : perTokenBudget)
+                    : perTokenBudget;
+
+                const { promise, pushTrade } = streamAndSimulateFlipScalper(
+                    mintAddress, config, log, tokenBudget
+                );
+                currentPushTrade = pushTrade;
+
+                // Flush all buffered trades that arrived before session was ready
+                for (const t of pendingTrades) {
+                    pushTrade(t);
+                }
+                pendingTrades = [];
+
+                const result = await promise;
+                currentPushTrade = null;
+                endedMints.add(mintAddress);
+                currentMint = null;
+
+                if (runningWallet) {
+                    wallet = wallet - tokenBudget + result.finalBalance;
+                }
                 allResults.push(result);
                 if (config.save) appendResult(config.save, result, config);
-            } else {
-                const mintAddress = await waitForNewMint(log);
-                const result = await streamAndSimulate(mintAddress, config, log, perTokenBudget);
-                allResults.push(result);
-                if (config.save) appendResult(config.save, result, config);
-            }
 
-            const result = allResults[allResults.length - 1];
-
-            if (config.json) {
-                console.log(JSON.stringify(result));
-            } else {
-                printResult(result, config);
-                if (runningWallet) console.log(`  Wallet: ${(Number(wallet) / 1e9).toFixed(4)} SOL`);
-                if (allResults.length > 1) {
-                    printSummary(allResults, config);
-                    if (runningWallet) console.log(`Final wallet: ${(Number(wallet) / 1e9).toFixed(4)} SOL`);
+                if (config.json) {
+                    console.log(JSON.stringify(result));
+                } else {
+                    printResult(result, config);
+                    if (runningWallet) console.log(`  Wallet: ${(Number(wallet) / 1e9).toFixed(4)} SOL`);
+                    if (allResults.length > 1) {
+                        printSummary(allResults, config);
+                        if (runningWallet) console.log(`Final wallet: ${(Number(wallet) / 1e9).toFixed(4)} SOL`);
+                    }
                 }
             }
-        }
 
-        // Wallet depleted — print final summary
-        if (runningWallet && log) {
-            printSummary(allResults, config);
-            console.log(`Final wallet: ${(Number(wallet) / 1e9).toFixed(4)} SOL`);
+            // Cleanup
+            await connection.removeOnLogsListener(logsId);
+            if (runningWallet && log) {
+                printSummary(allResults, config);
+                console.log(`Final wallet: ${(Number(wallet) / 1e9).toFixed(4)} SOL`);
+            }
+        } else {
+            // ── All other strategies: original per-token subscription flow ──
+            while (true) {
+                if (runningWallet) {
+                    if (wallet < tradeSizeLamports) {
+                        if (log) console.log(`\n  Wallet depleted (${(Number(wallet) / 1e9).toFixed(4)} SOL < ${config.tradeSize} SOL trade size). Stopping.`);
+                        break;
+                    }
+                    const tokenBudget = wallet < perTokenBudget ? wallet : perTokenBudget;
+
+                    const mintAddress = await waitForNewMint(log);
+                    const result = await streamAndSimulate(mintAddress, config, log, tokenBudget);
+                    wallet = wallet - tokenBudget + result.finalBalance;
+                    allResults.push(result);
+                    if (config.save) appendResult(config.save, result, config);
+                } else {
+                    const mintAddress = await waitForNewMint(log);
+                    const result = await streamAndSimulate(mintAddress, config, log, perTokenBudget);
+                    allResults.push(result);
+                    if (config.save) appendResult(config.save, result, config);
+                }
+
+                const result = allResults[allResults.length - 1];
+
+                if (config.json) {
+                    console.log(JSON.stringify(result));
+                } else {
+                    printResult(result, config);
+                    if (runningWallet) console.log(`  Wallet: ${(Number(wallet) / 1e9).toFixed(4)} SOL`);
+                    if (allResults.length > 1) {
+                        printSummary(allResults, config);
+                        if (runningWallet) console.log(`Final wallet: ${(Number(wallet) / 1e9).toFixed(4)} SOL`);
+                    }
+                }
+            }
+
+            // Wallet depleted — print final summary
+            if (runningWallet && log) {
+                printSummary(allResults, config);
+                console.log(`Final wallet: ${(Number(wallet) / 1e9).toFixed(4)} SOL`);
+            }
         }
     }
 }

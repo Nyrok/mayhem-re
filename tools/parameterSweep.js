@@ -62,7 +62,8 @@ class BondingCurve {
     getPriceFloat() { return Number(this.virtualSolReserves) / Number(this.virtualTokenReserves); }
     getSolForTokens(tokenAmount) {
         if (tokenAmount <= 0n) return 0n;
-        const solBeforeFee = tokenAmount * this.virtualSolReserves / (this.virtualTokenReserves + tokenAmount);
+        let solBeforeFee = tokenAmount * this.virtualSolReserves / (this.virtualTokenReserves + tokenAmount);
+        if (solBeforeFee > this.realSolReserves) solBeforeFee = this.realSolReserves;
         const fee = solBeforeFee * FEE_BASIS_POINTS / BASIS_POINTS;
         return solBeforeFee - fee;
     }
@@ -79,8 +80,8 @@ class BondingCurve {
     }
     executeSell(tokenAmount) {
         if (tokenAmount <= 0n) return 0n;
-        const solBeforeFee = tokenAmount * this.virtualSolReserves / (this.virtualTokenReserves + tokenAmount);
-        if (solBeforeFee > this.realSolReserves) return 0n;
+        let solBeforeFee = tokenAmount * this.virtualSolReserves / (this.virtualTokenReserves + tokenAmount);
+        if (solBeforeFee > this.realSolReserves) solBeforeFee = this.realSolReserves;
         const fee = solBeforeFee * FEE_BASIS_POINTS / BASIS_POINTS;
         const solOut = solBeforeFee - fee;
         this.virtualTokenReserves += tokenAmount;
