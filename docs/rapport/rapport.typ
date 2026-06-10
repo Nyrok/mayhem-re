@@ -391,6 +391,56 @@ La règle des 20% crée une croissance exponentielle de la taille des trades au 
 
 Le graphique montre qu'après ~30 achats consécutifs, le montant par trade atteint le cap de 20 SOL et se stabilise. En pratique, la séquence aléatoire buy/sell fait osciller le montant des trades autour d'un équilibre.
 
+== Tests d'indépendance de la séquence buy/sell
+
+L'affirmation « direction 50/50 aléatoire » du tableau @bot-params a été vérifiée formellement en décomposant la question « la séquence est-elle i.i.d. 50/50 ? » en trois sous-questions orthogonales, chacune avec son test dédié (`tools/independenceTests.py`). Un point méthodologique essentiel : les trades ne forment pas une séquence continue mais *44 sessions indépendantes* (2 045 trades, sessions $>= 20$ trades). Chaque statistique est donc calculée *par session* puis agrégée — concaténer les sessions introduirait des transitions inter-sessions sans signification (le générateur est vraisemblablement réinitialisé à chaque token).
+
+=== Test 1 — Marginale (binomial)
+
+$H_0 : p = 0.5$. Sur 2 045 trades : 1 060 buys, soit *51,83 %* (erreur-type 1,11 pp), $p = 0.10$. Non significatif. Par session : 1/44 significative à 5 % (attendu sous $H_0$ : ~2,2).
+
+=== Test 2 — Indépendance sérielle (runs test de Wald-Wolfowitz)
+
+Pour chaque session, le nombre de runs $R$ (séquences maximales de même direction) est comparé à sa loi sous l'hypothèse aléatoire : $mu = (2 n_1 n_2) / (n_1 + n_2) + 1$, $Z = (R - mu) \/ sigma approx cal(N)(0,1)$. Un $Z$ très négatif signalerait des streaks (clustering), un $Z$ très positif une sur-alternance — deux structures directement exploitables.
+
+#figure(
+  table(
+    columns: (1fr, auto),
+    align: (left, right),
+    stroke: 0.5pt + rgb("#003366"),
+    table.header([*Statistique agrégée (44 sessions)*], [*Valeur*]),
+    [Moyenne des $Z$ de session], [$-0.03$],
+    [Écart-type des $Z$ (attendu : 1)], [$0.96$],
+    [Sessions significatives $|Z| > 1.96$ (attendu : ~2,2)], [1 / 44],
+    [Kolmogorov-Smirnov des $Z$ vs $cal(N)(0,1)$], [$D = 0.095$, $p = 0.79$],
+    [Stouffer combiné], [$Z = -0.21$, $p = 0.83$],
+  ),
+  caption: [Runs test par session, agrégation sur 44 sessions],
+) <runs-test>
+
+La distribution empirique des $Z$ de session est indiscernable d'une $cal(N)(0,1)$ : ni streaks, ni sur-alternance. L'autocorrélation moyenne (lags 1–5) est partout $|r| < 0.05$ ; seul le lag 3 atteint $z = -2.16$, attendu par hasard sur 5 lags testés (comparaisons multiples).
+
+=== Test 3 — Structure d'ordre supérieur (Markov)
+
+Table de transition d'ordre 1 (poolée intra-session) : $P("buy" | "buy") = 0.523$ contre $P("buy" | "sell") = 0.514$ — écart de $+0.9$ pp, $chi^2 = 0.17$, $p = 0.68$. Le test du rapport de vraisemblance entre ordres confirme l'absence de mémoire : ordre 0 vs 1, $G^2 = 0.17$ ($p = 0.68$) ; ordre 1 vs 2, $G^2 = 0.39$ ($p = 0.83$). Les quatre conditionnelles d'ordre 2 sont toutes dans $[0.504, 0.529]$, à moins d'une erreur-type de la marginale.
+
+=== Conclusion : aucune structure exploitable
+
+#figure(
+  table(
+    columns: (auto, auto, 1fr),
+    align: (left, right, left),
+    stroke: 0.5pt + rgb("#003366"),
+    table.header([*Signal*], [*Taille d'effet*], [*Verdict vs ~2 % de frais aller-retour*]),
+    [Biais marginal], [1,83 pp], [Non significatif, et inexploitable même si réel],
+    [Edge ordre 1], [0,46 pp], [Très en dessous du seuil de rentabilité],
+    [Runs / streaks], [$Z$ moyen $-0.03$], [Aucun signal],
+  ),
+  caption: [Significativité vs exploitabilité],
+) <independence-verdict>
+
+La séquence *réalisée* est statistiquement indiscernable d'un tirage i.i.d. équilibré : la direction du prochain trade du bot n'est pas prédictible à partir de l'historique des directions. Ces tests ne couvrent toutefois que la séquence observée — un PRNG faible avec un seed devinable y serait invisible et resterait la seule voie de prédiction restante. Conséquence stratégique : tout edge doit venir de la *mécanique* du bot (règle des 20 %, asymétrie d'impact AMM, cycle de session) et non de la prédiction directionnelle.
+
 #pagebreak()
 
 // ═════════════════════════════════════════════════════════════════════════
